@@ -9,13 +9,13 @@ This document describes the modular architecture of MoFA Studio, a desktop appli
 - **Version**: 0.1.0
 - **Edition**: Rust 2021
 - **License**: Apache-2.0
-- **Repository**: https://github.com/YOUR_ORG/mofa-studio
+- **Repository**: https://github.com/mofa-org/studio
 - **UI Framework**: Makepad (GPU-accelerated, immediate mode)
 
 ## Directory Structure
 
 ```
-mofa-studio/
+studio/
 ├── Cargo.toml              # Workspace configuration
 ├── ARCHITECTURE.md         # This file (English)
 ├── 架构指南.md              # Architecture guide (Chinese)
