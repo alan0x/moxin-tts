@@ -550,6 +550,64 @@ pub enum TabId {
 
 ---
 
+### P1.3 - Sidebar Squeeze/Push Effect 🚧 TODO
+
+**Goal**: When clicking the hamburger button, instead of overlaying the sidebar, it should squeeze into the app window and push the main content to the right. Clicking again retracts the sidebar.
+
+#### Current Implementation Analysis
+
+**How it works now:**
+- Sidebar is an **overlay** positioned absolutely at `abs_pos: (0, 52)` with `width: 250`
+- Slides in/out using X-axis translation animation
+- Main content is unaware of sidebar - stays full width underneath
+- Hover detection on hamburger triggers show/hide with 200ms cubic ease-out animation
+
+**Key files:**
+- `mofa-studio-shell/src/app.rs`:
+  - Lines 69-95: Sidebar overlay definition
+  - Lines 528-563: Hover handling (`handle_sidebar_hover()`)
+  - Lines 639-687: Animation (`update_sidebar_animation()`, `start_sidebar_slide_in/out()`)
+- `mofa-studio-shell/src/widgets/sidebar.rs`: Sidebar widget
+
+#### Recommended Approach: Hybrid Push Effect
+
+Keep the overlay architecture, but animate the content area margin when sidebar opens:
+
+```
+1. When sidebar slides in (x: -250 → 0):
+   - Animate content area margin-left: 0 → 250px
+   - Content "squeezes" as sidebar pushes in
+
+2. When sidebar slides out (x: 0 → -250):
+   - Animate content area margin-left: 250px → 0
+   - Content expands back to full width
+
+3. Hover behavior unchanged:
+   - Same trigger detection
+   - Same close-on-leave logic
+```
+
+#### Implementation Steps
+
+- [ ] In `update_sidebar_animation()`, calculate content margin based on animation progress
+- [ ] Apply `margin: {left: X}` or `abs_pos` offset to `content_area` in dashboard
+- [ ] Sync margin animation with sidebar slide animation (same easing, same duration)
+- [ ] Ensure hover overlay detection bounds remain intact
+- [ ] Test dark mode compatibility
+- [ ] Update documentation
+
+#### Why This Works
+
+- Preserves hover overlay detection bounds
+- No flow/layout restructuring required
+- Same animation timing ensures smooth sync
+- Content responds visually without structural changes to layout
+
+**Files to Modify**:
+- `mofa-studio-shell/src/app.rs` - Add content margin animation in `update_sidebar_animation()`
+
+---
+
 ## P2: Medium Priority (Do Third)
 
 ### State Management 📋 ANALYZED (Deferred)
