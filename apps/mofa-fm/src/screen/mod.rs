@@ -650,6 +650,9 @@ live_design! {
                             draw_selection: {
                                 color: (INDIGO_200)
                             }
+                            draw_cursor: {
+                                color: (ACCENT_BLUE)
+                            }
                         }
 
                         button_group = <View> {
@@ -980,6 +983,9 @@ live_design! {
                             }
                             draw_selection: {
                                 color: (INDIGO_200)
+                            }
+                            draw_cursor: {
+                                color: (ACCENT_BLUE)
                             }
                         }
 

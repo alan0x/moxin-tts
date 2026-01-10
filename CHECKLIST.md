@@ -503,6 +503,25 @@ if let Event::NextFrame(nf) = event {
 
 ---
 
+### P1.1.3 - TextInput Cursor Fix ✅ DONE
+
+**Issue**: TextInput fields (prompt input and log search) had no visible blinking cursor.
+
+**Solution**: Added `draw_cursor` property with color to both TextInput widgets.
+
+```rust
+draw_cursor: {
+    color: (ACCENT_BLUE)
+}
+```
+
+**Key Learning**: Makepad TextInput requires explicit `draw_cursor` styling for the cursor to be visible. Using simple `color` property works better than `fn get_color()` for cursor rendering.
+
+**Files Modified**:
+- `apps/mofa-fm/src/screen/mod.rs` - Added draw_cursor to prompt_input and log_search
+
+---
+
 ### P1.2 - Fix Magic Strings ✅ DONE
 
 Created type-safe `TabId` enum to replace magic string literals:
