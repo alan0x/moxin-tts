@@ -110,12 +110,12 @@ if command -v dora &> /dev/null; then
     read -p "Do you want to reinstall/update Dora CLI? (y/n): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        cargo install dora-cli --locked
+        cargo install dora-cli --version 0.3.12 --locked --force
         print_success "Dora CLI updated"
     fi
 else
     print_info "Installing Dora CLI..."
-    cargo install dora-cli --locked
+    cargo install dora-cli --version 0.3.12 --locked
     print_success "Dora CLI installed"
 fi
 

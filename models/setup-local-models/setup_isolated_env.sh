@@ -293,8 +293,8 @@ install_dora_cli() {
     
     # Check if cargo is available
     if command -v cargo &> /dev/null; then
-        print_info "Installing dora-cli via cargo..."
-        cargo install dora-cli --locked
+        print_info "Installing dora-cli v0.3.12 via cargo..."
+        cargo install dora-cli --version 0.3.12 --locked
         
         # Check if installation was successful
         if [ -f "$HOME/.cargo/bin/dora" ]; then
