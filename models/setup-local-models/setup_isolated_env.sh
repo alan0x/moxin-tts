@@ -249,10 +249,19 @@ install_dependencies() {
     pip install huggingface-hub==0.34.4
     pip install datasets accelerate sentencepiece protobuf
     
-    # Install dora-rs
+    # Install dora-rs from GitHub (PyPI source distributions have build issues)
     print_info "Installing dora-rs..."
-    pip install dora-rs==0.3.12
+    # Ensure macOS Rust targets are available for building dora-rs
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v rustup &> /dev/null; then
+        rustup target add x86_64-apple-darwin 2>/dev/null || true
+        rustup target add aarch64-apple-darwin 2>/dev/null || true
+    fi
+    pip install "git+https://github.com/dora-rs/dora.git#subdirectory=apis/python/node"
     
+    # Install numba/llvmlite from conda-forge (avoids LLVM build requirement)
+    print_info "Installing numba from conda-forge..."
+    conda install -c conda-forge numba llvmlite -y
+
     # Install other dependencies
     print_info "Installing additional dependencies..."
     pip install pyarrow scipy librosa soundfile webrtcvad
@@ -293,19 +302,20 @@ install_dora_cli() {
     
     # Check if cargo is available
     if command -v cargo &> /dev/null; then
-        print_info "Installing dora-cli v0.3.12 via cargo..."
-        cargo install dora-cli --version 0.3.12 --locked
-        
+        print_info "Installing latest dora-cli via cargo..."
+        # Ensure macOS targets are available for Rust builds
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            rustup target add x86_64-apple-darwin 2>/dev/null || true
+            rustup target add aarch64-apple-darwin 2>/dev/null || true
+        fi
+        cargo install dora-cli --locked
+
         # Check if installation was successful
         if [ -f "$HOME/.cargo/bin/dora" ]; then
             VERSION=$($HOME/.cargo/bin/dora --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
-            if [ "$VERSION" = "0.3.12" ]; then
-                # Link to conda environment
-                ln -sf "$HOME/.cargo/bin/dora" "$CONDA_PREFIX/bin/dora"
-                print_success "Dora CLI version 0.3.12 installed and linked to environment"
-            else
-                print_warning "Dora CLI installed but version is $VERSION (expected 0.3.12)"
-            fi
+            # Link to conda environment
+            ln -sf "$HOME/.cargo/bin/dora" "$CONDA_PREFIX/bin/dora"
+            print_success "Dora CLI version $VERSION installed and linked to environment"
         else
             print_warning "Dora CLI installation failed"
         fi
