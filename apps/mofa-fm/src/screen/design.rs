@@ -4,6 +4,9 @@
 
 use makepad_widgets::*;
 
+// Import widget types from mofa-ui for live_design macro expansion
+use mofa_ui::{LedMeter, MicButton, AecButton};
+
 use super::MoFaFMScreen;
 
 live_design! {
@@ -20,6 +23,177 @@ live_design! {
     SECTION_SPACING = 12.0
     PANEL_RADIUS = 4.0
     PANEL_PADDING = 12.0
+
+    // Individual LED component for level meters
+    Led = <RoundedView> {
+        width: 8
+        height: 14
+        show_bg: true
+        draw_bg: {
+            instance active: 0.0
+            instance dark_mode: 0.0
+            instance color_r: 0.133
+            instance color_g: 0.773
+            instance color_b: 0.373
+            border_radius: 2.0
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+
+                let on_color = vec4(self.color_r, self.color_g, self.color_b, 1.0);
+                let off_color = mix(
+                    vec4(0.886, 0.910, 0.941, 1.0),  // LED_OFF light
+                    vec4(0.278, 0.337, 0.412, 1.0),  // LED_OFF dark
+                    self.dark_mode
+                );
+
+                sdf.fill(mix(off_color, on_color, self.active));
+                return sdf.result;
+            }
+        }
+    }
+
+    // 5-LED horizontal level meter
+    LedMeter = {{LedMeter}} {
+        width: Fit
+        height: Fit
+        flow: Right
+        spacing: 3
+        align: {y: 0.5}
+        padding: {top: 2, bottom: 2}
+
+        led_1 = <Led> {}
+        led_2 = <Led> {}
+        led_3 = <Led> {}
+        led_4 = <Led> {}
+        led_5 = <Led> {}
+    }
+
+    // Microphone toggle button with on/off icons and recording indicator
+    MicButton = {{MicButton}} {
+        width: Fit
+        height: Fit
+        flow: Overlay
+        cursor: Hand
+        padding: 4
+
+        // Background with recording indicator (pulsing when active)
+        show_bg: true
+        draw_bg: {
+            instance recording: 0.0  // 1.0 = recording (not muted), 0.0 = muted
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
+
+                // Recording indicator: pulsing red dot in top-right when active
+                let dot_x = self.rect_size.x - 6.0;
+                let dot_y = 4.0;
+                let dot_radius = 3.0;
+                let dist = length(self.pos * self.rect_size - vec2(dot_x, dot_y));
+
+                // Pulse animation (only when recording)
+                let pulse = (sin(self.time * 4.0) * 0.3 + 0.7) * self.recording;
+                let red = vec4(0.937, 0.267, 0.267, 1.0);
+
+                // Draw pulsing red dot when recording
+                if dist < dot_radius && self.recording > 0.5 {
+                    sdf.fill(mix(red, vec4(1.0, 0.4, 0.4, 1.0), pulse));
+                } else {
+                    sdf.fill(vec4(0.0, 0.0, 0.0, 0.0));  // Transparent background
+                }
+
+                return sdf.result;
+            }
+        }
+
+        mic_icon_on = <View> {
+            width: Fit, height: Fit
+            icon = <Icon> {
+                draw_icon: {
+                    instance dark_mode: 0.0
+                    svg_file: dep("crate://self/resources/icons/mic.svg")
+                    fn get_color(self) -> vec4 {
+                        return mix(
+                            vec4(0.392, 0.455, 0.545, 1.0),  // SLATE_500
+                            vec4(1.0, 1.0, 1.0, 1.0),        // WHITE
+                            self.dark_mode
+                        );
+                    }
+                }
+                icon_walk: {width: 20, height: 20}
+            }
+        }
+
+        mic_icon_off = <View> {
+            width: Fit, height: Fit
+            visible: false
+            <Icon> {
+                draw_icon: {
+                    svg_file: dep("crate://self/resources/icons/mic-off.svg")
+                    fn get_color(self) -> vec4 {
+                        return vec4(0.937, 0.267, 0.267, 1.0);  // ACCENT_RED
+                    }
+                }
+                icon_walk: {width: 20, height: 20}
+            }
+        }
+    }
+
+    // AEC toggle button with animated speaking indicator
+    AecButton = {{AecButton}} {
+        width: Fit
+        height: Fit
+        padding: 6
+        cursor: Hand
+        show_bg: true
+
+        draw_bg: {
+            instance enabled: 0.0   // 0.0=off (muted), 1.0=on (recording) - matches Rust default
+            instance speaking: 0.0  // 1.0=voice detected, 0.0=silent
+
+            // VAD indicator: red when speaking, green when enabled but silent, gray when disabled
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
+
+                let red = vec4(0.9, 0.2, 0.2, 1.0);        // Speaking color
+                let bright_red = vec4(1.0, 0.3, 0.3, 1.0); // Speaking pulse
+                let green = vec4(0.133, 0.773, 0.373, 1.0); // Enabled, silent
+                let bright_green = vec4(0.2, 0.9, 0.5, 1.0);
+                let gray = vec4(0.667, 0.686, 0.725, 1.0);  // Disabled
+
+                // Fast pulse when speaking (4x speed)
+                let speak_pulse = step(0.0, sin(self.time * 8.0)) * self.speaking;
+                // Slow pulse when enabled but not speaking
+                let idle_pulse = step(0.0, sin(self.time * 2.0)) * self.enabled * (1.0 - self.speaking);
+
+                // Base color: gray (disabled) -> green (enabled) -> red (speaking)
+                let base = mix(gray, green, self.enabled);
+                let base = mix(base, red, self.speaking * self.enabled);
+
+                // Pulse color
+                let pulse_color = mix(bright_green, bright_red, self.speaking);
+                let col = mix(base, pulse_color, (speak_pulse + idle_pulse) * 0.5);
+
+                sdf.fill(col);
+                return sdf.result;
+            }
+        }
+
+        align: {x: 0.5, y: 0.5}
+
+        icon = <Icon> {
+            draw_icon: {
+                svg_file: dep("crate://self/resources/icons/aec.svg")
+                fn get_color(self) -> vec4 {
+                    return vec4(1.0, 1.0, 1.0, 1.0);  // WHITE
+                }
+            }
+            icon_walk: {width: 20, height: 20}
+        }
+    }
 
     // Tab button style
     TabButton = <View> {
@@ -315,14 +489,20 @@ live_design! {
                 }
             }
 
-            // Audio control panel container - horizontal layout with individual containers
+            // Audio control panel container - side by side: controls and device selection
             audio_container = <View> {
                 width: Fill, height: Fit
                 flow: Right
                 spacing: (SECTION_SPACING)
 
-                // Mic level meter container
-                mic_container = <RoundedView> {
+                // Left side: mic, AEC, and buffer controls
+                audio_controls_row = <View> {
+                    width: Fit, height: Fit
+                    flow: Right
+                    spacing: (SECTION_SPACING)
+
+                    // Mic level meter container
+                    mic_container = <RoundedView> {
                     width: Fit, height: Fit
                     padding: (PANEL_PADDING)
                     show_bg: true
@@ -347,52 +527,9 @@ live_design! {
                         spacing: 10
                         align: {y: 0.5}
 
-                        mic_mute_btn = <View> {
-                            width: Fit, height: Fit
-                            flow: Overlay
-                            cursor: Hand
-                            padding: 4
+                        mic_mute_btn = <MicButton> {}
 
-                            mic_icon_on = <View> {
-                                width: Fit, height: Fit
-                                icon = <Icon> {
-                                    draw_icon: {
-                                        instance dark_mode: 0.0
-                                        svg_file: dep("crate://self/resources/icons/mic.svg")
-                                        fn get_color(self) -> vec4 {
-                                            return mix((SLATE_500), (WHITE), self.dark_mode);
-                                        }
-                                    }
-                                    icon_walk: {width: 20, height: 20}
-                                }
-                            }
-
-                            mic_icon_off = <View> {
-                                width: Fit, height: Fit
-                                visible: false
-                                <Icon> {
-                                    draw_icon: {
-                                        svg_file: dep("crate://self/resources/icons/mic-off.svg")
-                                        fn get_color(self) -> vec4 { return (ACCENT_RED); }
-                                    }
-                                    icon_walk: {width: 20, height: 20}
-                                }
-                            }
-                        }
-
-                        mic_level_meter = <View> {
-                            width: Fit, height: Fit
-                            flow: Right
-                            spacing: 3
-                            align: {y: 0.5}
-                            padding: {top: 2, bottom: 2}
-
-                            mic_led_1 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (GREEN_500), border_radius: 2.0 } }
-                            mic_led_2 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (GREEN_500), border_radius: 2.0 } }
-                            mic_led_3 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            mic_led_4 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            mic_led_5 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                        }
+                        mic_level_meter = <LedMeter> {}
                     }
                 }
 
@@ -422,52 +559,7 @@ live_design! {
                         spacing: 8
                         align: {y: 0.5}
 
-                        aec_toggle_btn = <View> {
-                            width: Fit, height: Fit
-                            padding: 6
-                            flow: Overlay
-                            cursor: Hand
-                            show_bg: true
-                            draw_bg: {
-                                instance enabled: 1.0   // 1.0=on (recording), 0.0=off (muted)
-                                instance speaking: 0.0  // 1.0=voice detected, 0.0=silent
-                                // VAD indicator: red when speaking, green when enabled but silent, gray when disabled
-                                fn pixel(self) -> vec4 {
-                                    let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                    sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
-                                    let red = vec4(0.9, 0.2, 0.2, 1.0);        // Speaking color
-                                    let bright_red = vec4(1.0, 0.3, 0.3, 1.0); // Speaking pulse
-                                    let green = vec4(0.133, 0.773, 0.373, 1.0); // Enabled, silent
-                                    let bright_green = vec4(0.2, 0.9, 0.5, 1.0);
-                                    let gray = vec4(0.667, 0.686, 0.725, 1.0);  // Disabled
-
-                                    // Fast pulse when speaking (4x speed)
-                                    let speak_pulse = step(0.0, sin(self.time * 8.0)) * self.speaking;
-                                    // Slow pulse when enabled but not speaking
-                                    let idle_pulse = step(0.0, sin(self.time * 2.0)) * self.enabled * (1.0 - self.speaking);
-
-                                    // Base color: gray (disabled) -> green (enabled) -> red (speaking)
-                                    let base = mix(gray, green, self.enabled);
-                                    let base = mix(base, red, self.speaking * self.enabled);
-
-                                    // Pulse color
-                                    let pulse_color = mix(bright_green, bright_red, self.speaking);
-                                    let col = mix(base, pulse_color, (speak_pulse + idle_pulse) * 0.5);
-
-                                    sdf.fill(col);
-                                    return sdf.result;
-                                }
-                            }
-                            align: {x: 0.5, y: 0.5}
-
-                            <Icon> {
-                                draw_icon: {
-                                    svg_file: dep("crate://self/resources/icons/aec.svg")
-                                    fn get_color(self) -> vec4 { return (WHITE); }
-                                }
-                                icon_walk: {width: 20, height: 20}
-                            }
-                        }
+                        aec_toggle_btn = <AecButton> {}
                     }
                 }
 
@@ -508,19 +600,7 @@ live_design! {
                             text: "Buffer"
                         }
 
-                        buffer_meter = <View> {
-                            width: Fit, height: Fit
-                            flow: Right
-                            spacing: 3
-                            align: {y: 0.5}
-                            padding: {top: 2, bottom: 2}
-
-                            buffer_led_1 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_2 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_3 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_4 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_5 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                        }
+                        buffer_meter = <LedMeter> {}
 
                         buffer_pct = <Label> {
                             draw_text: {
@@ -534,8 +614,9 @@ live_design! {
                         }
                     }
                 }
+                } // Close audio_controls_row
 
-                // Device selectors container
+                // Right side: Device selectors container (fills remaining space)
                 device_container = <RoundedView> {
                     width: Fill, height: Fit
                     padding: (PANEL_PADDING)
@@ -558,129 +639,189 @@ live_design! {
                     device_selectors = <View> {
                         width: Fill, height: Fit
                         flow: Right
-                        spacing: 6
-                        align: {x: 0.5, y: 0.5}  // Center aligned
+                        spacing: 16
+                        align: {y: 0.5}
 
-                        // Mic icon (green)
-                        mic_icon = <Icon> {
-                            draw_icon: {
-                                svg_file: dep("crate://self/resources/icons/mic.svg")
-                                fn get_color(self) -> vec4 {
-                                    return vec4(0.133, 0.773, 0.373, 1.0);  // Green #22c55f
-                                }
-                            }
-                            icon_walk: {width: 14, height: 14}
-                        }
+                        // Input device group (fills available space)
+                        input_device_group = <View> {
+                            width: Fill, height: Fit
+                            flow: Right
+                            spacing: 8
+                            align: {y: 0.5}
 
-                        // Mic name label (same as buffer)
-                        mic_name_label = <Label> {
-                            width: Fit
-                            text: "Microphone"
-                            draw_text: {
-                                instance dark_mode: 0.0
-                                text_style: <FONT_MEDIUM>{ font_size: 11.0 }
-                                fn get_color(self) -> vec4 {
-                                    return mix((GRAY_700), (TEXT_SECONDARY_DARK), self.dark_mode);
+                            input_device_label = <Label> {
+                                width: 90  // Fixed width for alignment with output label
+                                text: "Microphone:"
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_MEDIUM>{ font_size: 11.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                                    }
                                 }
                             }
-                        }
 
-                        // Audio device dropdown (≡ trigger)
-                        audio_device_dropdown = <DropDown> {
-                            width: 24, height: 24
-                            margin: {left: 4, right: 0}
-                            padding: 0
-                            align: {x: 0.5, y: 0.5}
-                            popup_menu_position: OnSelected
-                            labels: ["≡"]
-                            draw_bg: {
-                                instance dark_mode: 0.0
-                                border_radius: 4.0
-                                border_size: 1.0
-                                fn pixel(self) -> vec4 {
-                                    let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                    sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
-                                    let bg = mix((GRAY_100), (SLATE_700), self.dark_mode);
-                                    let border = mix((BORDER), (SLATE_600), self.dark_mode);
-                                    sdf.fill(bg);
-                                    sdf.stroke(border, self.border_size);
-                                    return sdf.result;
-                                }
-                            }
-                            draw_text: {
-                                instance dark_mode: 0.0
-                                text_style: <FONT_REGULAR>{ font_size: 12.0 }
-                                fn get_color(self) -> vec4 {
-                                    return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
-                                }
-                            }
-                            values: []
-                            selected_item: 0
-                            popup_menu: {
-                                width: 350
-                                height: Fit
+                            input_device_dropdown = <DropDown> {
+                                width: Fill, height: Fit
+                                padding: {left: 10, right: 10, top: 6, bottom: 6}
+                                popup_menu_position: BelowInput
+                                // Labels will be set at runtime by init_audio()
+                                labels: []
+                                values: []
+                                selected_item: 0
                                 draw_bg: {
                                     instance dark_mode: 0.0
-                                    border_size: 1.0
                                     fn pixel(self) -> vec4 {
                                         let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 2.0);
-                                        let bg = mix((WHITE), (SLATE_800), self.dark_mode);
-                                        let border = mix((BORDER), (SLATE_600), self.dark_mode);
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 3.0);
+                                        let bg = mix((SLATE_100), (SLATE_700), self.dark_mode);
                                         sdf.fill(bg);
-                                        sdf.stroke(border, self.border_size);
                                         return sdf.result;
                                     }
                                 }
-                                menu_item: {
-                                    width: Fill
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_REGULAR>{ font_size: 11.0 }
+                                    fn get_color(self) -> vec4 {
+                                        let light = mix((SLATE_500), (TEXT_PRIMARY), self.focus);
+                                        let dark = mix((SLATE_300), (TEXT_PRIMARY_DARK), self.focus);
+                                        return mix(light, dark, self.dark_mode);
+                                    }
+                                }
+                                popup_menu: {
+                                    width: 250
                                     draw_bg: {
                                         instance dark_mode: 0.0
+                                        border_size: 1.0
                                         fn pixel(self) -> vec4 {
                                             let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                            sdf.rect(0., 0., self.rect_size.x, self.rect_size.y);
-                                            let base = mix((WHITE), (SLATE_800), self.dark_mode);
-                                            let hover_color = mix((GRAY_100), (SLATE_700), self.dark_mode);
-                                            sdf.fill(mix(base, hover_color, self.hover));
+                                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 2.0);
+                                            let bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                                            let border = mix((BORDER), (SLATE_600), self.dark_mode);
+                                            sdf.fill(bg);
+                                            sdf.stroke(border, self.border_size);
                                             return sdf.result;
                                         }
                                     }
-                                    draw_text: {
-                                        instance dark_mode: 0.0
-                                        fn get_color(self) -> vec4 {
-                                            let light_base = mix((GRAY_700), (TEXT_PRIMARY), self.active);
-                                            let dark_base = mix((SLATE_300), (TEXT_PRIMARY_DARK), self.active);
-                                            let base = mix(light_base, dark_base, self.dark_mode);
-                                            let light_hover = (TEXT_PRIMARY);
-                                            let dark_hover = (TEXT_PRIMARY_DARK);
-                                            let hover_color = mix(light_hover, dark_hover, self.dark_mode);
-                                            return mix(base, hover_color, self.hover);
+                                    menu_item: {
+                                        width: Fill
+                                        draw_bg: {
+                                            instance dark_mode: 0.0
+                                            fn pixel(self) -> vec4 {
+                                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                sdf.rect(0., 0., self.rect_size.x, self.rect_size.y);
+                                                let base = mix((WHITE), (SLATE_800), self.dark_mode);
+                                                let hover_color = mix((GRAY_100), (SLATE_700), self.dark_mode);
+                                                sdf.fill(mix(base, hover_color, self.hover));
+                                                return sdf.result;
+                                            }
+                                        }
+                                        draw_text: {
+                                            instance dark_mode: 0.0
+                                            fn get_color(self) -> vec4 {
+                                                let light_base = mix((GRAY_700), (TEXT_PRIMARY), self.active);
+                                                let dark_base = mix((SLATE_300), (TEXT_PRIMARY_DARK), self.active);
+                                                let base = mix(light_base, dark_base, self.dark_mode);
+                                                let light_hover = (TEXT_PRIMARY);
+                                                let dark_hover = (TEXT_PRIMARY_DARK);
+                                                let hover_color = mix(light_hover, dark_hover, self.dark_mode);
+                                                return mix(base, hover_color, self.hover);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
 
-                        // Speaker icon (green)
-                        speaker_icon = <Icon> {
-                            draw_icon: {
-                                svg_file: dep("crate://self/resources/icons/speaker.svg")
-                                fn get_color(self) -> vec4 {
-                                    return vec4(0.133, 0.773, 0.373, 1.0);  // Green #22c55f
+                        <VerticalDivider> {}
+
+                        // Output device group (fills available space)
+                        output_device_group = <View> {
+                            width: Fill, height: Fit
+                            flow: Right
+                            spacing: 8
+                            align: {y: 0.5}
+
+                            output_device_label = <Label> {
+                                width: 90  // Fixed width for alignment with input label
+                                text: "Speaker:"
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_MEDIUM>{ font_size: 11.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                                    }
                                 }
                             }
-                            icon_walk: {width: 14, height: 14}
-                        }
 
-                        // Speaker name label (same as buffer)
-                        speaker_name_label = <Label> {
-                            width: Fit
-                            text: "Speaker"
-                            draw_text: {
-                                instance dark_mode: 0.0
-                                text_style: <FONT_MEDIUM>{ font_size: 11.0 }
-                                fn get_color(self) -> vec4 {
-                                    return mix((GRAY_700), (TEXT_SECONDARY_DARK), self.dark_mode);
+                            output_device_dropdown = <DropDown> {
+                                width: Fill, height: Fit
+                                padding: {left: 10, right: 10, top: 6, bottom: 6}
+                                popup_menu_position: BelowInput
+                                // Labels will be set at runtime by init_audio()
+                                labels: []
+                                values: []
+                                selected_item: 0
+                                draw_bg: {
+                                    instance dark_mode: 0.0
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 3.0);
+                                        let bg = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                        sdf.fill(bg);
+                                        return sdf.result;
+                                    }
+                                }
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_REGULAR>{ font_size: 11.0 }
+                                    fn get_color(self) -> vec4 {
+                                        let light = mix((SLATE_500), (TEXT_PRIMARY), self.focus);
+                                        let dark = mix((SLATE_300), (TEXT_PRIMARY_DARK), self.focus);
+                                        return mix(light, dark, self.dark_mode);
+                                    }
+                                }
+                                popup_menu: {
+                                    width: 250
+                                    draw_bg: {
+                                        instance dark_mode: 0.0
+                                        border_size: 1.0
+                                        fn pixel(self) -> vec4 {
+                                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 2.0);
+                                            let bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                                            let border = mix((BORDER), (SLATE_600), self.dark_mode);
+                                            sdf.fill(bg);
+                                            sdf.stroke(border, self.border_size);
+                                            return sdf.result;
+                                        }
+                                    }
+                                    menu_item: {
+                                        width: Fill
+                                        draw_bg: {
+                                            instance dark_mode: 0.0
+                                            fn pixel(self) -> vec4 {
+                                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                sdf.rect(0., 0., self.rect_size.x, self.rect_size.y);
+                                                let base = mix((WHITE), (SLATE_800), self.dark_mode);
+                                                let hover_color = mix((GRAY_100), (SLATE_700), self.dark_mode);
+                                                sdf.fill(mix(base, hover_color, self.hover));
+                                                return sdf.result;
+                                            }
+                                        }
+                                        draw_text: {
+                                            instance dark_mode: 0.0
+                                            fn get_color(self) -> vec4 {
+                                                let light_base = mix((GRAY_700), (TEXT_PRIMARY), self.active);
+                                                let dark_base = mix((SLATE_300), (TEXT_PRIMARY_DARK), self.active);
+                                                let base = mix(light_base, dark_base, self.dark_mode);
+                                                let light_hover = (TEXT_PRIMARY);
+                                                let dark_hover = (TEXT_PRIMARY_DARK);
+                                                let hover_color = mix(light_hover, dark_hover, self.dark_mode);
+                                                return mix(base, hover_color, self.hover);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

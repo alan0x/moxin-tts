@@ -22,6 +22,7 @@ use crate::log_bridge;
 use crate::dora_integration::{DoraIntegration, DoraCommand};
 use mofa_widgets::participant_panel::ParticipantPanelWidgetExt;
 use mofa_widgets::{StateChangeListener, TimerControl};
+use mofa_ui::{LedMeterWidgetExt, MicButtonWidgetExt, AecButtonWidgetExt};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -86,16 +87,6 @@ pub struct MoFaFMScreen {
     #[rust]
     output_devices: Vec<String>,
     #[rust]
-    input_labels: Vec<String>,  // Labels with "(Default)" suffix for dropdown
-    #[rust]
-    output_labels: Vec<String>, // Labels with "(Default)" suffix for dropdown
-    #[rust]
-    input_device_count: usize,  // Number of input devices (for index calculation)
-    #[rust]
-    selected_input_idx: usize,  // Currently selected input device index (1-based in combined list)
-    #[rust]
-    selected_output_idx: usize, // Currently selected output device index
-    #[rust]
     log_level_filter: usize,  // 0=ALL, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR
     #[rust]
     log_node_filter: usize,   // 0=ALL, 1=ASR, 2=TTS, 3=LLM, 4=Bridge, 5=Monitor, 6=App
@@ -104,13 +95,9 @@ pub struct MoFaFMScreen {
     #[rust]
     log_display_dirty: bool,   // Flag to track if log display needs update
     #[rust]
-    log_update_timer: Timer,   // Timer for throttled log updates (200ms)
+    last_log_update: Option<std::time::Instant>,  // Timestamp of last log display update
     #[rust]
     log_filter_cache: (usize, usize, String),  // Cache: (level, node, search) to detect filter changes
-
-    // Dropdown width caching for popup menu sync
-    #[rust]
-    cached_device_dropdown_width: f64,
 
     // AEC toggle state
     #[rust]
@@ -213,7 +200,7 @@ pub struct MoFaFMScreen {
 
 impl Widget for MoFaFMScreen {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        self.view.handle_event(cx, event, scope);
+        let actions = cx.capture_actions(|cx| self.view.handle_event(cx, event, scope));
 
         // Initialize audio and log bridge on first event
         if !self.audio_initialized {
@@ -261,8 +248,27 @@ impl Widget for MoFaFMScreen {
             }
         }
 
+        // Debug: Log every event type once
+        static mut LOGGED_TIMER: bool = false;
+        unsafe {
+            if !LOGGED_TIMER {
+                if let Event::Timer(_) = event {
+                    ::log::info!("Received Timer event");
+                    LOGGED_TIMER = true;
+                }
+            }
+        }
+
         // Handle audio timer for mic level updates, log polling, and buffer status
         if self.audio_timer.is_event(event).is_some() {
+            // Debug: log timer firing
+            static mut TIMER_COUNT: u32 = 0;
+            unsafe {
+                TIMER_COUNT += 1;
+                if TIMER_COUNT == 1 {
+                    ::log::info!("Audio timer first fire");
+                }
+            }
             self.update_mic_level(cx);
             // Poll Rust logs (50ms interval is fine for log updates)
             self.poll_rust_logs(cx);
@@ -296,10 +302,10 @@ impl Widget for MoFaFMScreen {
             }
         }
 
-        // Handle log update timer - throttled log display updates
-        self.check_log_update_timer(cx, event);
+        // Note: Log updates are now handled by timestamp-based throttling in poll_rust_logs/mark_log_dirty
+        // No separate timer needed - the audio_timer (50ms) drives log polling
 
-        // Handle NextFrame for smooth copy button fade animation
+        // Handle NextFrame for animations only (mic level handled by audio_timer)
         if let Event::NextFrame(nf) = event {
             let mut needs_redraw = false;
             let current_time = nf.time;
@@ -440,54 +446,41 @@ impl Widget for MoFaFMScreen {
         }
 
         // Handle mic mute button click
-        let mic_btn = self.view.view(ids!(running_tab_content.audio_container.mic_container.mic_group.mic_mute_btn));
-        match event.hits(cx, mic_btn.area()) {
-            Hit::FingerUp(_) => {
-                self.mic_muted = !self.mic_muted;
-                self.view.view(ids!(running_tab_content.audio_container.mic_container.mic_group.mic_mute_btn.mic_icon_on))
-                    .set_visible(cx, !self.mic_muted);
-                self.view.view(ids!(running_tab_content.audio_container.mic_container.mic_group.mic_mute_btn.mic_icon_off))
-                    .set_visible(cx, self.mic_muted);
-                self.view.redraw(cx);
+        let mic_btn = self.view.mic_button(ids!(running_tab_content.audio_container.audio_controls_row.mic_container.mic_group.mic_mute_btn));
+        if mic_btn.clicked(&actions) {
+            self.mic_muted = !self.mic_muted;
+            ::log::info!("Mic mute toggled: muted={}", self.mic_muted);
+            mic_btn.set_muted(cx, self.mic_muted);
 
-                // Send start/stop recording command to AEC bridge
-                if let Some(ref dora) = self.dora_integration {
-                    if self.mic_muted {
-                        dora.stop_recording();
-                    } else {
-                        dora.start_recording();
-                    }
+            // Recording indicator only shows when dora is running and not muted
+            let is_dora_running = self.dora_integration.as_ref().map(|d| d.is_running()).unwrap_or(false);
+            mic_btn.set_recording(cx, is_dora_running && !self.mic_muted);
+
+            // Send start/stop recording command to AEC bridge
+            if let Some(ref dora) = self.dora_integration {
+                if self.mic_muted {
+                    dora.stop_recording();
+                } else {
+                    dora.start_recording();
                 }
             }
-            _ => {}
         }
 
         // Handle AEC toggle button click
-        // Note: AEC is always enabled in native library (macOS VoiceProcessingIO)
-        // This toggle controls whether human input is active (recording on/off)
-        // When off: human speaker input is disabled, only AI participants speak
-        let aec_btn = self.view.view(ids!(running_tab_content.audio_container.aec_container.aec_group.aec_toggle_btn));
-        match event.hits(cx, aec_btn.area()) {
-            Hit::FingerUp(_) => {
-                self.aec_enabled = !self.aec_enabled;
-                let enabled_val = if self.aec_enabled { 1.0 } else { 0.0 };
-                self.view.view(ids!(running_tab_content.audio_container.aec_container.aec_group.aec_toggle_btn))
-                    .apply_over(cx, live!{ draw_bg: { enabled: (enabled_val) } });
-                self.view.redraw(cx);
+        // AEC toggle switches between:
+        // - ON: macOS VoiceProcessingIO with hardware echo cancellation
+        // - OFF: Regular CPAL mic capture (no echo cancellation)
+        // Note: This does NOT stop recording - only mic mute does that
+        let aec_btn = self.view.aec_button(ids!(running_tab_content.audio_container.audio_controls_row.aec_container.aec_group.aec_toggle_btn));
+        if aec_btn.clicked(&actions) {
+            self.aec_enabled = !self.aec_enabled;
+            ::log::info!("AEC toggled: enabled={}", self.aec_enabled);
+            aec_btn.set_enabled(cx, self.aec_enabled);
 
-                // AEC toggle controls human input recording
-                // When AEC is off, stop recording (human can't speak)
-                // When AEC is on, start recording (human can speak with echo cancellation)
-                if let Some(ref dora) = self.dora_integration {
-                    dora.set_aec_enabled(self.aec_enabled);
-                    if self.aec_enabled {
-                        dora.start_recording();
-                    } else {
-                        dora.stop_recording();
-                    }
-                }
+            // Only switch capture method, don't start/stop recording
+            if let Some(ref dora) = self.dora_integration {
+                dora.set_aec_enabled(self.aec_enabled);
             }
-            _ => {}
         }
 
         // Handle tab clicks
@@ -556,13 +549,8 @@ impl Widget for MoFaFMScreen {
         }
 
         // Handle actions
-        let actions = match event {
-            Event::Actions(actions) => actions.as_slice(),
-            _ => &[],
-        };
-
-        // Handle MofaHero start/stop actions
-        for action in actions {
+        // Handle MofaHero start/stop actions (from captured actions at line 203)
+        for action in &actions {
             match action.as_widget_action().cast() {
                 MofaHeroAction::StartClicked => {
                     ::log::info!("Screen received StartClicked action");
@@ -577,53 +565,40 @@ impl Widget for MoFaFMScreen {
         }
 
         // Handle toggle log panel button
-        if self.view.button(ids!(log_section.toggle_column.toggle_log_btn)).clicked(actions) {
-            self.toggle_log_panel(cx);
+        // Use event.hits pattern for log toggle button
+        let log_toggle_btn = self.view.button(ids!(log_section.toggle_column.toggle_log_btn));
+        match event.hits(cx, log_toggle_btn.area()) {
+            Hit::FingerUp(_) => {
+                ::log::info!("Log toggle button FingerUp!");
+                self.toggle_log_panel(cx);
+            }
+            _ => {}
         }
 
-        // Handle unified audio device dropdown selection
-        // Layout: [0: mic divider, 1..N: mics, N+1: speaker divider, N+2..M: speakers, M+1: ☰ trigger]
-        // Trigger at END so popup extends UPWARD with OnSelected positioning
-        if let Some(item) = self.view.drop_down(ids!(running_tab_content.audio_container.device_container.device_selectors.audio_device_dropdown)).selected(actions) {
-            let mic_divider_idx = 0;
-            let speaker_divider_idx = self.input_device_count + 1;
-            let trigger_idx = self.input_device_count + self.output_devices.len() + 2;
+        // Handle input device dropdown selection
+        if let Some(item) = self.view.drop_down(ids!(running_tab_content.audio_container.device_container.device_selectors.input_device_group.input_device_dropdown)).selected(&actions) {
+            if item < self.input_devices.len() {
+                let device_name = self.input_devices[item].clone();
+                self.select_input_device(cx, &device_name);
+            }
+        }
 
-            // Skip trigger and divider items
-            if item == trigger_idx || item == mic_divider_idx || item == speaker_divider_idx {
-                // Non-selectable item - restore trigger display
-                self.rebuild_dropdown_labels(cx);
-            } else if item >= 1 && item <= self.input_device_count {
-                // Input device selected (indices 1 to input_device_count)
-                let device_idx = item - 1; // Convert to 0-based index
-                if device_idx < self.input_devices.len() {
-                    let device_name = self.input_devices[device_idx].clone();
-                    self.selected_input_idx = item;
-                    self.select_input_device(cx, &device_name);
-                    self.rebuild_dropdown_labels(cx);
-                    self.update_device_dropdown_label(cx);
-                }
-            } else if item > speaker_divider_idx && item < trigger_idx {
-                // Output device selected (indices between speaker divider and trigger)
-                let device_idx = item - speaker_divider_idx - 1; // Convert to 0-based index
-                if device_idx < self.output_devices.len() {
-                    let device_name = self.output_devices[device_idx].clone();
-                    self.selected_output_idx = item;
-                    self.select_output_device(&device_name);
-                    self.rebuild_dropdown_labels(cx);
-                    self.update_device_dropdown_label(cx);
-                }
+        // Handle output device dropdown selection
+        if let Some(item) = self.view.drop_down(ids!(running_tab_content.audio_container.device_container.device_selectors.output_device_group.output_device_dropdown)).selected(&actions) {
+            if item < self.output_devices.len() {
+                let device_name = self.output_devices[item].clone();
+                self.select_output_device(&device_name);
             }
         }
 
         // Handle log level filter dropdown
-        if let Some(selected) = self.view.drop_down(ids!(log_section.log_content_column.log_header.log_filter_row.level_filter)).selected(actions) {
+        if let Some(selected) = self.view.drop_down(ids!(log_section.log_content_column.log_header.log_filter_row.level_filter)).selected(&actions) {
             self.log_level_filter = selected;
             self.update_log_display(cx);
         }
 
         // Handle log node filter dropdown
-        if let Some(selected) = self.view.drop_down(ids!(log_section.log_content_column.log_header.log_filter_row.node_filter)).selected(actions) {
+        if let Some(selected) = self.view.drop_down(ids!(log_section.log_content_column.log_header.log_filter_row.node_filter)).selected(&actions) {
             self.log_node_filter = selected;
             self.update_log_display(cx);
         }
@@ -661,33 +636,33 @@ impl Widget for MoFaFMScreen {
         }
 
         // Handle log search text change
-        if self.view.text_input(ids!(log_section.log_content_column.log_header.log_filter_row.log_search)).changed(actions).is_some() {
+        if self.view.text_input(ids!(log_section.log_content_column.log_header.log_filter_row.log_search)).changed(&actions).is_some() {
             self.update_log_display(cx);
         }
 
         // Handle Send button click
-        if self.view.button(ids!(left_column.prompt_container.prompt_section.prompt_row.button_group.send_prompt_btn)).clicked(actions) {
+        if self.view.button(ids!(left_column.prompt_container.prompt_section.prompt_row.button_group.send_prompt_btn)).clicked(&actions) {
             self.send_prompt(cx);
         }
 
         // Handle Reset button click
-        if self.view.button(ids!(left_column.prompt_container.prompt_section.prompt_row.button_group.reset_btn)).clicked(actions) {
+        if self.view.button(ids!(left_column.prompt_container.prompt_section.prompt_row.button_group.reset_btn)).clicked(&actions) {
             self.reset_conversation(cx);
         }
 
         // Handle Context Save button click
-        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.context_section.context_header.context_save_btn)).clicked(actions) {
+        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.context_section.context_header.context_save_btn)).clicked(&actions) {
             self.save_context(cx);
         }
 
         // Handle role save button clicks
-        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.student1_config.student1_header.student1_save_btn)).clicked(actions) {
+        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.student1_config.student1_header.student1_save_btn)).clicked(&actions) {
             self.save_role_config(cx, "student1");
         }
-        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.student2_config.student2_header.student2_save_btn)).clicked(actions) {
+        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.student2_config.student2_header.student2_save_btn)).clicked(&actions) {
             self.save_role_config(cx, "student2");
         }
-        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.tutor_config.tutor_header.tutor_save_btn)).clicked(actions) {
+        if self.view.button(ids!(left_column.settings_tab_content.settings_panel.settings_scroll.settings_content.role_section.tutor_config.tutor_header.tutor_save_btn)).clicked(&actions) {
             self.save_role_config(cx, "tutor");
         }
 
@@ -718,19 +693,6 @@ impl Widget for MoFaFMScreen {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        // Update popup menu width to match dropdown width
-        // This handles first-frame zero width and caches values for performance
-        let device_dropdown = self.view.drop_down(ids!(running_tab_content.audio_container.device_container.device_selectors.audio_device_dropdown));
-        let dropdown_width = device_dropdown.area().rect(cx).size.x;
-
-        // Only update if width changed significantly (> 1px) to avoid unnecessary apply_over calls
-        if dropdown_width > 0.0 && (dropdown_width - self.cached_device_dropdown_width).abs() > 1.0 {
-            self.cached_device_dropdown_width = dropdown_width;
-            device_dropdown.apply_over(cx, live! {
-                popup_menu: { width: (dropdown_width) }
-            });
-        }
-
         self.view.draw_walk(cx, scope, walk)
     }
 }
@@ -1495,30 +1457,43 @@ impl StateChangeListener for MoFaFMScreenRef {
             });
 
             // Apply dark mode to audio control containers
-            inner.view.view(ids!(left_column.running_tab_content.audio_container.mic_container)).apply_over(cx, live!{
+            inner.view.view(ids!(running_tab_content.audio_container.audio_controls_row.mic_container)).apply_over(cx, live!{
                 draw_bg: { dark_mode: (dark_mode) }
             });
-            // Apply dark mode to mic icon
-            inner.view.view(ids!(left_column.running_tab_content.audio_container.mic_container.mic_group.mic_mute_btn.mic_icon_on.icon)).apply_over(cx, live!{
-                draw_icon: { dark_mode: (dark_mode) }
-            });
-            inner.view.view(ids!(left_column.running_tab_content.audio_container.aec_container)).apply_over(cx, live!{
+            // Apply dark mode to mic button and level meter
+            inner.view.mic_button(ids!(running_tab_content.audio_container.audio_controls_row.mic_container.mic_group.mic_mute_btn))
+                .apply_dark_mode(cx, dark_mode);
+            inner.view.led_meter(ids!(running_tab_content.audio_container.audio_controls_row.mic_container.mic_group.mic_level_meter))
+                .apply_dark_mode(cx, dark_mode);
+            inner.view.view(ids!(running_tab_content.audio_container.audio_controls_row.aec_container)).apply_over(cx, live!{
                 draw_bg: { dark_mode: (dark_mode) }
             });
-            inner.view.view(ids!(left_column.running_tab_content.audio_container.buffer_container)).apply_over(cx, live!{
+            inner.view.view(ids!(running_tab_content.audio_container.audio_controls_row.buffer_container)).apply_over(cx, live!{
                 draw_bg: { dark_mode: (dark_mode) }
             });
-            inner.view.view(ids!(left_column.running_tab_content.audio_container.device_container)).apply_over(cx, live!{
+            // Apply dark mode to buffer level meter
+            inner.view.led_meter(ids!(running_tab_content.audio_container.audio_controls_row.buffer_container.buffer_group.buffer_meter))
+                .apply_dark_mode(cx, dark_mode);
+            inner.view.view(ids!(running_tab_content.audio_container.device_container)).apply_over(cx, live!{
                 draw_bg: { dark_mode: (dark_mode) }
             });
 
-            // Apply dark mode to device dropdown (the "|" separator)
-            inner.view.drop_down(ids!(left_column.running_tab_content.audio_container.device_container.device_selectors.audio_device_dropdown)).apply_over(cx, live!{
+            // Apply dark mode to device dropdowns
+            inner.view.drop_down(ids!(running_tab_content.audio_container.device_container.device_selectors.input_device_group.input_device_dropdown)).apply_over(cx, live!{
+                draw_text: { dark_mode: (dark_mode) }
+                draw_bg: { dark_mode: (dark_mode) }
+            });
+            inner.view.drop_down(ids!(running_tab_content.audio_container.device_container.device_selectors.output_device_group.output_device_dropdown)).apply_over(cx, live!{
+                draw_text: { dark_mode: (dark_mode) }
+                draw_bg: { dark_mode: (dark_mode) }
+            });
+            // Apply dark mode to device labels
+            inner.view.label(ids!(running_tab_content.audio_container.device_container.device_selectors.input_device_group.input_device_label)).apply_over(cx, live!{
                 draw_text: { dark_mode: (dark_mode) }
             });
-
-            // NOTE: DropDown apply_over causes "target class not found" errors
-            // TODO: Find alternative way to theme dropdowns
+            inner.view.label(ids!(running_tab_content.audio_container.device_container.device_selectors.output_device_group.output_device_label)).apply_over(cx, live!{
+                draw_text: { dark_mode: (dark_mode) }
+            });
 
             // Apply dark mode to MofaHero
             inner.view.mofa_hero(ids!(left_column.mofa_hero)).update_dark_mode(cx, dark_mode);
@@ -1729,13 +1704,9 @@ impl StateChangeListener for MoFaFMScreenRef {
                 draw_bg: { dark_mode: (dark_mode) }
             });
 
-            // Apply dark mode to log content Markdown
-            // Update dark_mode instance variable on each draw component (they have get_color shader functions)
-            let log_markdown = inner.view.markdown(ids!(log_section.log_content_column.log_scroll.log_content_wrapper.log_content));
-            log_markdown.apply_over(cx, live!{
-                draw_normal: { dark_mode: (dark_mode) }
-                draw_bold: { dark_mode: (dark_mode) }
-                draw_fixed: { dark_mode: (dark_mode) }
+            // Apply dark mode to log content Label
+            inner.view.label(ids!(log_section.log_content_column.log_scroll.log_content_wrapper.log_content)).apply_over(cx, live!{
+                draw_text: { dark_mode: (dark_mode) }
             });
 
             inner.view.redraw(cx);
