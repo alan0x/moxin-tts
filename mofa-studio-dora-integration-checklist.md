@@ -4,6 +4,96 @@
 
 ---
 
+## Apps Overview
+
+MoFA Studio contains two main applications that use Dora dataflows:
+
+### MoFA FM (Voice Chat with Human)
+
+**Purpose:** Interactive voice assistant where users **talk** to AI tutors using their microphone.
+
+**Key Features:**
+- Human voice input via AEC (echo cancellation) + VAD (voice activity detection) + ASR
+- Human can interrupt AI speakers (highest priority)
+- 3 AI participants: Student1, Student2, Tutor
+- Real-time speech-to-text and text-to-speech
+
+**Dataflow:** `apps/mofa-fm/dataflow/voice-chat.yml`
+
+**Architecture:**
+```
+┌─────────────────┐    ┌─────────────┐    ┌───────────────────┐
+│  mofa-mic-input │ -> │     ASR     │ -> │  All 3 Bridges    │
+│  (AEC + VAD)    │    │  (FunASR)   │    │  (human input)    │
+└─────────────────┘    └─────────────┘    └───────────────────┘
+         │                                          │
+         ▼                                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Conference Controller                           │
+│  Policy: [(human, 0.001), (tutor, *), (student1, 1), ...]   │
+│  Human has highest priority - can interrupt anytime          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Config Files:** `study_config_student1.toml`, `study_config_student2.toml`, `study_config_tutor.toml`
+
+---
+
+### MoFA Debate (Autonomous AI Debate)
+
+**Purpose:** Watch AI agents debate each other autonomously. User provides a topic via text prompt.
+
+**Key Features:**
+- No human voice input (text prompts only)
+- 3 AI participants with distinct roles:
+  - **Student1 (PRO)** - Argues in favor of the topic
+  - **Student2 (CON)** - Argues against the topic
+  - **Tutor (Judge)** - Moderates, stays neutral, summarizes
+- Turn-based debate with controller-managed speaking order
+
+**Dataflow:** `apps/mofa-debate/dataflow/voice-chat.yml`
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Conference Controller                           │
+│  Policy: [(tutor, *), (student2, 1), (student1, 2)]         │
+│  Tutor always speaks, then alternating students              │
+└─────────────────────────────────────────────────────────────┘
+         │                    │                    │
+         ▼                    ▼                    ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│  Student1     │    │  Student2     │    │    Tutor      │
+│  (PRO - GPT)  │    │  (CON - GPT)  │    │  (Judge-GPT)  │
+└───────────────┘    └───────────────┘    └───────────────┘
+```
+
+**Config Files:** `debate_config_pro.toml`, `debate_config_con.toml`, `debate_config_judge.toml`
+
+---
+
+### Key Differences
+
+| Feature | MoFA FM | MoFA Debate |
+|---------|---------|-------------|
+| **Human Voice Input** | Yes (Mic + ASR) | No (text prompts only) |
+| **Use Case** | Interactive voice chat | Autonomous AI debate |
+| **Participants** | 3 AI + 1 Human | 3 AI only |
+| **Human Can Interrupt** | Yes (highest priority) | N/A |
+| **Policy Pattern** | `[(human, 0.001), (tutor, *), ...]` | `[(tutor, *), (student2, 1), (student1, 2)]` |
+| **Dynamic Nodes** | mofa-mic-input, mofa-audio-player, mofa-prompt-input, mofa-system-log | mofa-audio-player-debate, mofa-prompt-input-debate, mofa-system-log-debate |
+| **TTS Voices** | Zhao Daniu, Doubao, Ma Yun | Zhao Daniu, Chen Yifan, Luo Xiang |
+
+### Shared Components
+
+Both apps share:
+- **mofa-ui widgets:** MofaHero, LedMeter, MicButton, AecButton (inline definitions due to Makepad parser limitations)
+- **mofa-ui modules:** AudioManager, log_bridge
+- **mofa-widgets:** ParticipantPanel, LogPanel, theme
+- **mofa-dora-bridge:** SharedDoraState, AudioPlayerBridge, PromptInputBridge, SystemLogBridge
+
+---
+
 ## P0: Critical (Do First) - Blocking Production
 
 ### P0.1 - Buffer Status Measurement ✅ COMPLETE
@@ -1132,34 +1222,61 @@ cargo doc --package mofa-dora-bridge --no-deps
 
 ## Quick Reference: Key Files
 
-### Dora Bridge Layer
+### Dora Bridge Layer (Shared)
 | File | Purpose | Lines |
 |------|---------|-------|
 | `mofa-dora-bridge/src/widgets/audio_player.rs` | Audio bridge, signals | ~600 |
 | `mofa-dora-bridge/src/widgets/prompt_input.rs` | Chat, control commands | ~430 |
 | `mofa-dora-bridge/src/widgets/system_log.rs` | Log aggregation | ~360 |
+| `mofa-dora-bridge/src/widgets/aec_input.rs` | AEC mic input bridge (FM only) | ~550 |
 | `mofa-dora-bridge/src/shared_state.rs` | SharedDoraState, DirtyVec | ~547 |
 
 *Note: `participant_panel.rs` was deleted in P0.8 - LED visualization now calculated from output waveform*
 
-### Audio Layer
+### Shared UI Infrastructure (mofa-ui)
 | File | Purpose | Lines |
 |------|---------|-------|
-| `apps/mofa-fm/src/audio_player.rs` | Circular buffer, CPAL | ~360 |
-| `apps/mofa-fm/src/audio.rs` | Device enum, mic monitor | ~230 |
+| `mofa-ui/src/audio.rs` | AudioManager, device enum, mic monitor | ~233 |
+| `mofa-ui/src/log_bridge.rs` | Rust log capture for UI display | ~123 |
+| `mofa-ui/src/system_monitor.rs` | Background CPU/memory/GPU monitor | ~150 |
+| `mofa-ui/src/widgets/mofa_hero.rs` | MofaHero status bar widget | ~400 |
+| `mofa-ui/src/widgets/led_meter.rs` | LED level meter widget | ~245 |
+| `mofa-ui/src/widgets/mic_button.rs` | Mic toggle button widget | ~200 |
+| `mofa-ui/src/widgets/aec_button.rs` | AEC toggle button widget | ~220 |
 
-### UI Layer
+*Note: LED/Mic/AEC widgets have inline definitions in app design.rs due to Makepad parser limitations with `link::theme::*` imports*
+
+### MoFA FM (Voice Chat)
 | File | Purpose | Lines |
 |------|---------|-------|
 | `apps/mofa-fm/src/screen/mod.rs` | Main screen struct, Widget impl | ~590 |
-| `apps/mofa-fm/src/screen/design.rs` | live_design! UI layout | ~1085 |
-| `apps/mofa-fm/src/mofa_hero.rs` | Status bar | ~730 |
-| `apps/mofa-fm/src/system_monitor.rs` | Background CPU/memory monitor | ~85 |
+| `apps/mofa-fm/src/screen/design.rs` | live_design! UI layout (inline widgets) | ~1250 |
+| `apps/mofa-fm/src/screen/audio_controls.rs` | Audio device selection, mic monitoring | ~150 |
+| `apps/mofa-fm/src/screen/chat_panel.rs` | Chat display, prompt input | ~115 |
+| `apps/mofa-fm/src/screen/log_panel.rs` | Log display, filtering | ~175 |
+| `apps/mofa-fm/src/screen/dora_handlers.rs` | Dora event handling, dataflow control | ~330 |
+| `apps/mofa-fm/src/audio_player.rs` | Circular buffer, CPAL playback | ~360 |
+| `apps/mofa-fm/src/dora_integration.rs` | Dora lifecycle management | ~400 |
 
-### Configuration
+### MoFA Debate (AI Debate)
+| File | Purpose | Lines |
+|------|---------|-------|
+| `apps/mofa-debate/src/screen/mod.rs` | Main screen struct, Widget impl | ~590 |
+| `apps/mofa-debate/src/screen/design.rs` | live_design! UI layout (inline widgets) | ~800 |
+| `apps/mofa-debate/src/screen/audio_controls.rs` | Audio device selection | ~150 |
+| `apps/mofa-debate/src/screen/chat_panel.rs` | Chat display, prompt input | ~115 |
+| `apps/mofa-debate/src/screen/log_panel.rs` | Log display, filtering | ~175 |
+| `apps/mofa-debate/src/screen/dora_handlers.rs` | Dora event handling | ~300 |
+| `apps/mofa-debate/src/audio_player.rs` | Circular buffer, CPAL playback | ~360 |
+| `apps/mofa-debate/src/dora_integration.rs` | Dora lifecycle management | ~350 |
+
+### Configuration / Dataflows
 | File | Purpose |
 |------|---------|
-| `apps/mofa-fm/dataflow/voice-chat.yml` | Dataflow definition |
+| `apps/mofa-fm/dataflow/voice-chat.yml` | FM dataflow (with human mic input) |
+| `apps/mofa-fm/dataflow/study_config_*.toml` | FM role configs (student1, student2, tutor) |
+| `apps/mofa-debate/dataflow/voice-chat.yml` | Debate dataflow (AI-only) |
+| `apps/mofa-debate/dataflow/debate_config_*.toml` | Debate role configs (pro, con, judge) |
 | `MOFA_DORA_ARCHITECTURE.md` | Architecture diagram |
 
 ---
@@ -1176,7 +1293,7 @@ cargo doc --package mofa-dora-bridge --no-deps
 
 ---
 
-*Last Updated: 2026-01-10*
+*Last Updated: 2026-01-18*
 *P0 Progress: 8/8 complete ✅*
 *P1 Progress: 3/4 complete*
 *P2 Progress: 4/4 complete ✅*
@@ -1207,6 +1324,17 @@ cargo doc --package mofa-dora-bridge --no-deps
 - ✅ P3.1 CLI Interface (clap-based args: --dark-mode, --log-level, --dataflow)
 - ✅ P3.2 Git Tracking (mofa-dora-bridge already tracked)
 - ✅ P3.4 API Documentation (comprehensive rustdoc for mofa-dora-bridge)
+
+**Widget Consolidation Status (2026-01-18):**
+- ✅ `mofa-ui/src/audio.rs` - Shared AudioManager (moved from both apps)
+- ✅ `mofa-ui/src/log_bridge.rs` - Shared log capture (moved from both apps)
+- ✅ `mofa-ui/src/system_monitor.rs` - Shared system monitor
+- ✅ `mofa-ui/src/widgets/mofa_hero.rs` - Shared MofaHero widget
+- ⚠️ `mofa-ui/src/widgets/led_meter.rs` - Defined but **inline required** in apps
+- ⚠️ `mofa-ui/src/widgets/mic_button.rs` - Defined but **inline required** in apps
+- ⚠️ `mofa-ui/src/widgets/aec_button.rs` - Defined but **inline required** in apps
+
+*Note: LED/Mic/AEC widgets must use inline definitions in each app's design.rs due to Makepad live_design parser "Unexpected token #" error when importing `link::theme::*` in shared widget modules. The Rust WidgetExt traits from mofa-ui work correctly; only the live_design! visual definitions need to be inline.*
 
 **Remaining Items:**
 - P1.3 Waveform Visualization

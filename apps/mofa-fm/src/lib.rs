@@ -1,20 +1,21 @@
 //! MoFA FM App - AI-powered audio streaming and voice interface
 
-pub mod audio;
 pub mod audio_player;
 pub mod dora_integration;
-pub mod log_bridge;
-pub mod mofa_hero;
 pub mod screen;
-pub mod system_monitor;
 
-pub use audio::AudioManager;
 pub use dora_integration::{DoraCommand, DoraEvent, DoraIntegration};
-pub use mofa_hero::{ConnectionStatus, MofaHero, MofaHeroAction};
+// Re-export shared modules from mofa-ui
+pub use mofa_ui::{
+    // MofaHero widget
+    ConnectionStatus, MofaHero, MofaHeroAction, MofaHeroRef, MofaHeroWidgetExt,
+    // Audio infrastructure
+    AudioManager, AudioDeviceInfo,
+};
 pub use screen::MoFaFMScreen;
 pub use screen::MoFaFMScreenWidgetRefExt; // Export WidgetRefExt for timer control
 
-use makepad_widgets::Cx;
+use makepad_widgets::{Cx, live_id, LiveId};
 use mofa_widgets::{AppInfo, MofaApp};
 
 /// MoFA FM app descriptor
@@ -26,13 +27,16 @@ impl MofaApp for MoFaFMApp {
             name: "MoFA FM",
             id: "mofa-fm",
             description: "AI-powered audio streaming and voice interface",
+            tab_id: Some(live_id!(mofa_fm_tab)),
+            page_id: Some(live_id!(fm_page)),
+            show_in_sidebar: true,
+            ..Default::default()
         }
     }
 
     fn live_design(cx: &mut Cx) {
-        // Register mofa-ui widgets first (audio widgets used by this app)
-        mofa_ui::live_design(cx);
-        mofa_hero::live_design(cx);
+        // Note: mofa_ui::live_design(cx) is called by mofa-studio-shell
+        // Apps only need to register their own screen widgets
         screen::live_design(cx);
     }
 }

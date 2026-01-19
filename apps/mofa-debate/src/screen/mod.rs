@@ -14,9 +14,15 @@ mod dora_handlers;
 mod log_panel;
 
 use crate::dora_integration::{DoraCommand, DoraIntegration};
-use crate::log_bridge;
-use crate::mofa_hero::{MofaHeroAction, MofaHeroWidgetExt};
 use makepad_widgets::*;
+use mofa_ui::{
+    MofaHeroAction, MofaHeroWidgetExt,
+    MicButtonWidgetExt,
+    AecButtonWidgetExt,
+    LedMeterWidgetExt,
+    AudioManager,
+    log_bridge,
+};
 use mofa_widgets::participant_panel::ParticipantPanelWidgetExt;
 use mofa_widgets::{StateChangeListener, TimerControl};
 use std::path::PathBuf;
@@ -62,7 +68,7 @@ pub struct MoFaDebateScreen {
     #[rust]
     splitter_dragging: bool,
     #[rust]
-    audio_manager: Option<crate::audio::AudioManager>,
+    audio_manager: Option<AudioManager>,
     #[rust]
     audio_timer: Timer,
     #[rust]
@@ -266,52 +272,7 @@ impl Widget for MoFaDebateScreen {
             }
         }
 
-        // Handle mic mute button click
-        let mic_btn = self
-            .view
-            .view(ids!(audio_container.mic_container.mic_group.mic_mute_btn));
-        match event.hits(cx, mic_btn.area()) {
-            Hit::FingerUp(_) => {
-                self.mic_muted = !self.mic_muted;
-                self.view
-                    .view(ids!(
-                        audio_container
-                            .mic_container
-                            .mic_group
-                            .mic_mute_btn
-                            .mic_icon_on
-                    ))
-                    .set_visible(cx, !self.mic_muted);
-                self.view
-                    .view(ids!(
-                        audio_container
-                            .mic_container
-                            .mic_group
-                            .mic_mute_btn
-                            .mic_icon_off
-                    ))
-                    .set_visible(cx, self.mic_muted);
-                self.view.redraw(cx);
-            }
-            _ => {}
-        }
-
-        // Handle AEC toggle button click
-        // Note: AEC blink animation is now shader-driven, no timer needed
-        let aec_btn = self
-            .view
-            .view(ids!(audio_container.aec_container.aec_group.aec_toggle_btn));
-        match event.hits(cx, aec_btn.area()) {
-            Hit::FingerUp(_) => {
-                self.aec_enabled = !self.aec_enabled;
-                let enabled_val = if self.aec_enabled { 1.0 } else { 0.0 };
-                self.view
-                    .view(ids!(audio_container.aec_container.aec_group.aec_toggle_btn))
-                    .apply_over(cx, live! { draw_bg: { enabled: (enabled_val) } });
-                self.view.redraw(cx);
-            }
-            _ => {}
-        }
+        // Handle mic and AEC button actions (using shared mofa-ui widgets)
 
         // Handle splitter drag
         let splitter = self.view.view(ids!(splitter));
@@ -349,6 +310,20 @@ impl Widget for MoFaDebateScreen {
                 }
                 MofaHeroAction::None => {}
             }
+        }
+
+        // Handle mic button click (using shared MicButton widget)
+        let mic_btn = self.view.mic_button(ids!(audio_container.mic_container.mic_group.mic_mute_btn));
+        if mic_btn.clicked(actions) {
+            self.mic_muted = !self.mic_muted;
+            mic_btn.set_muted(cx, self.mic_muted);
+        }
+
+        // Handle AEC button click (using shared AecButton widget)
+        let aec_btn = self.view.aec_button(ids!(audio_container.aec_container.aec_group.aec_toggle_btn));
+        if aec_btn.clicked(actions) {
+            self.aec_enabled = !self.aec_enabled;
+            aec_btn.set_enabled(cx, self.aec_enabled);
         }
 
         // Handle toggle log panel button
@@ -730,24 +705,21 @@ impl StateChangeListener for MoFaDebateScreenRef {
                         draw_bg: { dark_mode: (dark_mode) }
                     },
                 );
-            // Apply dark mode to mic icon
+            // Apply dark mode to mic button (using shared MicButton widget)
             inner
                 .view
-                .icon(ids!(
-                    left_column
-                        .audio_container
-                        .mic_container
-                        .mic_group
-                        .mic_mute_btn
-                        .mic_icon_on
-                        .icon
-                ))
-                .apply_over(
-                    cx,
-                    live! {
-                        draw_icon: { dark_mode: (dark_mode) }
-                    },
-                );
+                .mic_button(ids!(left_column.audio_container.mic_container.mic_group.mic_mute_btn))
+                .apply_dark_mode(cx, dark_mode);
+
+            // Apply dark mode to LED meters (using shared LedMeter widget)
+            inner
+                .view
+                .led_meter(ids!(left_column.audio_container.mic_container.mic_group.mic_level_meter))
+                .apply_dark_mode(cx, dark_mode);
+            inner
+                .view
+                .led_meter(ids!(left_column.audio_container.buffer_container.buffer_group.buffer_meter))
+                .apply_dark_mode(cx, dark_mode);
             inner
                 .view
                 .view(ids!(left_column.audio_container.aec_container))

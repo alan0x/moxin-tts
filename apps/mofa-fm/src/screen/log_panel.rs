@@ -8,7 +8,7 @@
 //! - Maximum log entry limit to bound memory
 
 use makepad_widgets::*;
-use crate::log_bridge;
+use mofa_ui::log_bridge;
 use std::time::{Duration, Instant};
 
 use super::MoFaFMScreen;

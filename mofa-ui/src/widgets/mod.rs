@@ -65,6 +65,9 @@ pub mod role_editor;
 pub mod dataflow_picker;
 pub mod provider_selector;
 
+// Phase 5 - Hero widgets
+pub mod mofa_hero;
+
 // Re-export Phase 2 widgets
 pub use led_meter::{LedMeter, LedMeterRef, LedMeterWidgetExt, LedColors};
 pub use mic_button::{MicButton, MicButtonRef, MicButtonWidgetExt, MicButtonAction};
@@ -80,6 +83,9 @@ pub use role_editor::{RoleEditor, RoleEditorRef, RoleEditorWidgetExt, RoleEditor
 pub use dataflow_picker::{DataflowPicker, DataflowPickerRef, DataflowPickerWidgetExt, DataflowPickerAction};
 pub use provider_selector::{ProviderSelector, ProviderSelectorRef, ProviderSelectorWidgetExt, ProviderSelectorAction, ProviderInfo};
 
+// Re-export Phase 5 widgets (Hero)
+pub use mofa_hero::{MofaHero, MofaHeroRef, MofaHeroWidgetExt, MofaHeroAction, ConnectionStatus};
+
 use makepad_widgets::Cx;
 
 /// Register all widget live designs with Makepad.
@@ -89,8 +95,11 @@ use makepad_widgets::Cx;
 /// NOTE: Currently disabled due to Makepad live_design parsing issues.
 /// When `link::theme::*` is imported, the parser encounters "Unexpected token #" errors.
 /// Apps should define inline widget versions in their own live_design blocks.
-pub fn live_design(_cx: &mut Cx) {
-    // Phase 2 - Audio widgets (disabled - parsing issues)
+pub fn live_design(cx: &mut Cx) {
+    // Phase 2 - Audio widgets (disabled - parsing issues with link::theme::*)
+    // The Makepad live_design parser encounters "Unexpected token #" errors
+    // when shared widget modules import link::theme::*. Apps must define
+    // inline widget versions in their own live_design blocks.
     // led_meter::live_design(cx);
     // mic_button::live_design(cx);
     // aec_button::live_design(cx);
@@ -104,4 +113,7 @@ pub fn live_design(_cx: &mut Cx) {
     // role_editor::live_design(cx);
     // dataflow_picker::live_design(cx);
     // provider_selector::live_design(cx);
+
+    // Phase 5 - Hero widgets
+    mofa_hero::live_design(cx);
 }

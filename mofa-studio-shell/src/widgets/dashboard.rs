@@ -245,6 +245,82 @@ live_design! {
                     width: Fill, height: Fill
                     flow: Down
 
+                    // Hero title panel - displays current app name and metadata
+                    hero_title_panel = <RoundedView> {
+                        width: Fill, height: Fit
+                        padding: {left: 16, right: 16, top: 12, bottom: 12}
+                        margin: {bottom: 12}
+                        show_bg: true
+                        draw_bg: {
+                            instance dark_mode: 0.0
+                            border_radius: 8.0
+                            fn get_color(self) -> vec4 {
+                                return mix((PANEL_BG), (PANEL_BG_DARK), self.dark_mode);
+                            }
+                        }
+
+                        <View> {
+                            width: Fill, height: Fit
+                            flow: Right
+                            align: {y: 0.5}
+                            spacing: 12
+
+                            // App icon placeholder
+                            app_icon = <View> {
+                                width: 40, height: 40
+                                show_bg: true
+                                draw_bg: {
+                                    instance dark_mode: 0.0
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                        let c = self.rect_size * 0.5;
+                                        sdf.circle(c.x, c.y, 18.0);
+                                        let bg = mix((INDIGO_100), (SLATE_700), self.dark_mode);
+                                        sdf.fill(bg);
+                                        // Radio wave icon
+                                        sdf.circle(c.x, c.y, 4.0);
+                                        sdf.fill((ACCENT_INDIGO));
+                                        sdf.circle(c.x, c.y, 8.0);
+                                        sdf.stroke((ACCENT_INDIGO), 1.5);
+                                        sdf.circle(c.x, c.y, 13.0);
+                                        sdf.stroke((ACCENT_INDIGO), 1.5);
+                                        return sdf.result;
+                                    }
+                                }
+                            }
+
+                            // App title and description
+                            title_container = <View> {
+                                width: Fill, height: Fit
+                                flow: Down
+                                spacing: 2
+
+                                app_title = <Label> {
+                                    text: "MoFA FM"
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: <FONT_BOLD>{ font_size: 18.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                        }
+                                    }
+                                }
+
+                                app_description = <Label> {
+                                    text: "AI-powered audio streaming and voice interface"
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: <FONT_REGULAR>{ font_size: 12.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                                        }
+                                    }
+                                }
+                            }
+
+                        }
+                    }
+
                     content = <View> {
                         width: Fill, height: Fill
                         flow: Overlay

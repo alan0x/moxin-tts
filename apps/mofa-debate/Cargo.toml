@@ -7,6 +7,7 @@ edition.workspace = true
 makepad-widgets.workspace = true
 mofa-widgets = { path = "../../mofa-widgets" }
 mofa-dora-bridge = { path = "../../mofa-dora-bridge" }
+mofa-ui = { path = "../../mofa-ui" }
 mofa-settings = { path = "../mofa-settings" }
 parking_lot.workspace = true
 log.workspace = true

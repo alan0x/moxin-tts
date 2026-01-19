@@ -1,4 +1,7 @@
 //! MofaHero Widget - System status bar with Dataflow, CPU, Memory, GPU, and VRAM panels
+//!
+//! A shared hero widget that displays system monitoring information and
+//! provides dataflow start/stop controls.
 
 use crate::system_monitor;
 use makepad_widgets::*;
@@ -970,3 +973,4 @@ impl MofaHeroRef {
         }
     }
 }
+

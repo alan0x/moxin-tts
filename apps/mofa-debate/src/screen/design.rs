@@ -1,8 +1,12 @@
-//! MoFA FM Screen UI Design
+//! MoFA Debate Screen UI Design
 //!
 //! Contains the live_design! DSL block defining the UI layout and styling.
 
 use makepad_widgets::*;
+
+// Import widget types from mofa-ui for Rust code (WidgetExt traits)
+// Note: Live design uses inline definitions due to Makepad parser limitations
+use mofa_ui::{LedMeter, MicButton, AecButton};
 
 use super::MoFaDebateScreen;
 
@@ -14,12 +18,184 @@ live_design! {
     use mofa_widgets::theme::*;
     use mofa_widgets::participant_panel::ParticipantPanel;
     use mofa_widgets::log_panel::LogPanel;
-    use crate::mofa_hero::MofaHero;
+    use mofa_ui::widgets::mofa_hero::MofaHero;
 
     // Local layout constants (colors imported from theme)
     SECTION_SPACING = 12.0
     PANEL_RADIUS = 4.0
     PANEL_PADDING = 12.0
+
+    // Individual LED component for level meters
+    // Note: Inline definition required due to Makepad parser issues with shared widgets
+    Led = <RoundedView> {
+        width: 8
+        height: 14
+        show_bg: true
+        draw_bg: {
+            instance active: 0.0
+            instance dark_mode: 0.0
+            instance color_r: 0.133
+            instance color_g: 0.773
+            instance color_b: 0.373
+            border_radius: 2.0
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+
+                let on_color = vec4(self.color_r, self.color_g, self.color_b, 1.0);
+                let off_color = mix(
+                    vec4(0.886, 0.910, 0.941, 1.0),  // LED_OFF light
+                    vec4(0.278, 0.337, 0.412, 1.0),  // LED_OFF dark
+                    self.dark_mode
+                );
+
+                sdf.fill(mix(off_color, on_color, self.active));
+                return sdf.result;
+            }
+        }
+    }
+
+    // 5-LED horizontal level meter
+    LedMeter = {{LedMeter}} {
+        width: Fit
+        height: Fit
+        flow: Right
+        spacing: 3
+        align: {y: 0.5}
+        padding: {top: 2, bottom: 2}
+
+        led_1 = <Led> {}
+        led_2 = <Led> {}
+        led_3 = <Led> {}
+        led_4 = <Led> {}
+        led_5 = <Led> {}
+    }
+
+    // Microphone toggle button with on/off icons and recording indicator
+    MicButton = {{MicButton}} {
+        width: Fit
+        height: Fit
+        flow: Overlay
+        cursor: Hand
+        padding: 4
+
+        // Background with recording indicator (pulsing when active)
+        show_bg: true
+        draw_bg: {
+            instance recording: 0.0  // 1.0 = recording (not muted), 0.0 = muted
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
+
+                // Recording indicator: pulsing red dot in top-right when active
+                let dot_x = self.rect_size.x - 6.0;
+                let dot_y = 4.0;
+                let dot_radius = 3.0;
+                let dist = length(self.pos * self.rect_size - vec2(dot_x, dot_y));
+
+                // Pulse animation (only when recording)
+                let pulse = (sin(self.time * 4.0) * 0.3 + 0.7) * self.recording;
+                let red = vec4(0.937, 0.267, 0.267, 1.0);
+
+                // Draw pulsing red dot when recording
+                if dist < dot_radius && self.recording > 0.5 {
+                    sdf.fill(mix(red, vec4(1.0, 0.4, 0.4, 1.0), pulse));
+                } else {
+                    sdf.fill(vec4(0.0, 0.0, 0.0, 0.0));  // Transparent background
+                }
+
+                return sdf.result;
+            }
+        }
+
+        mic_icon_on = <View> {
+            width: Fit, height: Fit
+            icon = <Icon> {
+                draw_icon: {
+                    instance dark_mode: 0.0
+                    svg_file: dep("crate://self/resources/icons/mic.svg")
+                    fn get_color(self) -> vec4 {
+                        return mix(
+                            vec4(0.392, 0.455, 0.545, 1.0),  // SLATE_500
+                            vec4(1.0, 1.0, 1.0, 1.0),        // WHITE
+                            self.dark_mode
+                        );
+                    }
+                }
+                icon_walk: {width: 20, height: 20}
+            }
+        }
+
+        mic_icon_off = <View> {
+            width: Fit, height: Fit
+            visible: false
+            <Icon> {
+                draw_icon: {
+                    svg_file: dep("crate://self/resources/icons/mic-off.svg")
+                    fn get_color(self) -> vec4 {
+                        return vec4(0.937, 0.267, 0.267, 1.0);  // ACCENT_RED
+                    }
+                }
+                icon_walk: {width: 20, height: 20}
+            }
+        }
+    }
+
+    // AEC toggle button with animated speaking indicator
+    AecButton = {{AecButton}} {
+        width: Fit
+        height: Fit
+        padding: 6
+        cursor: Hand
+        show_bg: true
+
+        draw_bg: {
+            instance enabled: 0.0   // 0.0=off (muted), 1.0=on (recording) - matches Rust default
+            instance speaking: 0.0  // 1.0=voice detected, 0.0=silent
+
+            // VAD indicator: red when speaking, green when enabled but silent, gray when disabled
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
+
+                let red = vec4(0.9, 0.2, 0.2, 1.0);        // Speaking color
+                let bright_red = vec4(1.0, 0.3, 0.3, 1.0); // Speaking pulse
+                let green = vec4(0.133, 0.773, 0.373, 1.0); // Enabled, silent
+                let bright_green = vec4(0.2, 0.9, 0.5, 1.0);
+                let gray = vec4(0.667, 0.686, 0.725, 1.0);  // Disabled
+
+                // Fast pulse when speaking (4x speed)
+                let speak_pulse = step(0.0, sin(self.time * 8.0)) * self.speaking;
+                // Slow pulse when enabled but not speaking
+                let idle_pulse = step(0.0, sin(self.time * 2.0)) * self.enabled * (1.0 - self.speaking);
+
+                // Base color: gray (disabled) -> green (enabled) -> red (speaking)
+                let base = mix(gray, green, self.enabled);
+                let base = mix(base, red, self.speaking * self.enabled);
+
+                // Pulse color
+                let pulse_color = mix(bright_green, bright_red, self.speaking);
+                let col = mix(base, pulse_color, (speak_pulse + idle_pulse) * 0.5);
+
+                sdf.fill(col);
+                return sdf.result;
+            }
+        }
+
+        align: {x: 0.5, y: 0.5}
+
+        icon = <Icon> {
+            draw_icon: {
+                svg_file: dep("crate://self/resources/icons/aec.svg")
+                fn get_color(self) -> vec4 {
+                    return vec4(1.0, 1.0, 1.0, 1.0);  // WHITE
+                }
+            }
+            icon_walk: {width: 20, height: 20}
+        }
+    }
 
     // Reusable panel header style with dark mode support
     PanelHeader = <View> {
@@ -274,52 +450,9 @@ live_design! {
                         spacing: 10
                         align: {y: 0.5}
 
-                        mic_mute_btn = <View> {
-                            width: Fit, height: Fit
-                            flow: Overlay
-                            cursor: Hand
-                            padding: 4
+                        mic_mute_btn = <MicButton> {}
 
-                            mic_icon_on = <View> {
-                                width: Fit, height: Fit
-                                icon = <Icon> {
-                                    draw_icon: {
-                                        instance dark_mode: 0.0
-                                        svg_file: dep("crate://self/resources/icons/mic.svg")
-                                        fn get_color(self) -> vec4 {
-                                            return mix((SLATE_500), (WHITE), self.dark_mode);
-                                        }
-                                    }
-                                    icon_walk: {width: 20, height: 20}
-                                }
-                            }
-
-                            mic_icon_off = <View> {
-                                width: Fit, height: Fit
-                                visible: false
-                                <Icon> {
-                                    draw_icon: {
-                                        svg_file: dep("crate://self/resources/icons/mic-off.svg")
-                                        fn get_color(self) -> vec4 { return (ACCENT_RED); }
-                                    }
-                                    icon_walk: {width: 20, height: 20}
-                                }
-                            }
-                        }
-
-                        mic_level_meter = <View> {
-                            width: Fit, height: Fit
-                            flow: Right
-                            spacing: 3
-                            align: {y: 0.5}
-                            padding: {top: 2, bottom: 2}
-
-                            mic_led_1 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (GREEN_500), border_radius: 2.0 } }
-                            mic_led_2 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (GREEN_500), border_radius: 2.0 } }
-                            mic_led_3 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            mic_led_4 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            mic_led_5 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                        }
+                        mic_level_meter = <LedMeter> {}
                     }
                 }
 
@@ -349,40 +482,7 @@ live_design! {
                         spacing: 8
                         align: {y: 0.5}
 
-                        aec_toggle_btn = <View> {
-                            width: Fit, height: Fit
-                            padding: 6
-                            flow: Overlay
-                            cursor: Hand
-                            show_bg: true
-                            draw_bg: {
-                                instance enabled: 1.0  // 1.0=on, 0.0=off
-                                // Blink animation now driven by shader time - no timer needed!
-                                fn pixel(self) -> vec4 {
-                                    let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                    sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
-                                    let green = vec4(0.133, 0.773, 0.373, 1.0);
-                                    let bright = vec4(0.2, 0.9, 0.5, 1.0);
-                                    let gray = vec4(0.667, 0.686, 0.725, 1.0);
-                                    // When enabled, pulse between green and bright green using shader time
-                                    // sin(time * speed) creates smooth oscillation, step makes it blink
-                                    let blink = step(0.0, sin(self.time * 2.0)) * self.enabled;
-                                    let base = mix(gray, green, self.enabled);
-                                    let col = mix(base, bright, blink * 0.5);
-                                    sdf.fill(col);
-                                    return sdf.result;
-                                }
-                            }
-                            align: {x: 0.5, y: 0.5}
-
-                            <Icon> {
-                                draw_icon: {
-                                    svg_file: dep("crate://self/resources/icons/aec.svg")
-                                    fn get_color(self) -> vec4 { return (WHITE); }
-                                }
-                                icon_walk: {width: 20, height: 20}
-                            }
-                        }
+                        aec_toggle_btn = <AecButton> {}
                     }
                 }
 
@@ -423,19 +523,7 @@ live_design! {
                             text: "Buffer"
                         }
 
-                        buffer_meter = <View> {
-                            width: Fit, height: Fit
-                            flow: Right
-                            spacing: 3
-                            align: {y: 0.5}
-                            padding: {top: 2, bottom: 2}
-
-                            buffer_led_1 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_2 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_3 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_4 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                            buffer_led_5 = <RoundedView> { width: 8, height: 14, draw_bg: { color: (SLATE_200), border_radius: 2.0 } }
-                        }
+                        buffer_meter = <LedMeter> {}
 
                         buffer_pct = <Label> {
                             draw_text: {

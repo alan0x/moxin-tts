@@ -2,6 +2,8 @@
 //!
 //! This module sets up a custom logger that captures all log messages
 //! and makes them available to the UI via a channel.
+//!
+//! Shared log infrastructure for MoFA applications.
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use log::{Level, LevelFilter, Log, Metadata, Record};

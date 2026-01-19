@@ -2,7 +2,7 @@
 //!
 //! Handles log display, filtering, and clipboard operations.
 
-use crate::log_bridge;
+use mofa_ui::log_bridge;
 use makepad_widgets::*;
 
 use super::MoFaDebateScreen;

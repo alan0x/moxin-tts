@@ -1,4 +1,6 @@
 //! Audio device management and mic level monitoring
+//!
+//! Shared audio infrastructure for MoFA applications.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, Stream, StreamConfig};

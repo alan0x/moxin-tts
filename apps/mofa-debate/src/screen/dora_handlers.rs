@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::dora_integration::{DoraEvent, DoraIntegration};
-use crate::mofa_hero::{ConnectionStatus, MofaHeroWidgetExt};
 use mofa_settings::data::Preferences;
+use mofa_ui::{ConnectionStatus, MofaHeroWidgetExt};
 
 use super::{ChatMessageEntry, MoFaDebateScreen};
 

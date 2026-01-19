@@ -7,5 +7,12 @@ description = "Shared UI component library for MoFA Studio applications"
 [dependencies]
 makepad-widgets.workspace = true
 mofa-dora-bridge = { path = "../mofa-dora-bridge" }
+mofa-widgets = { path = "../mofa-widgets" }
 parking_lot.workspace = true
+sysinfo = "0.32"
 log.workspace = true
+# Audio device management
+cpal.workspace = true
+# Log bridge
+crossbeam-channel.workspace = true
+once_cell.workspace = true

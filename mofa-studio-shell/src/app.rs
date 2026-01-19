@@ -33,8 +33,9 @@ pub fn get_cli_args() -> &'static Args {
 }
 
 // App plugin system imports
-use mofa_widgets::{MofaApp, AppRegistry, TimerControl};
+use mofa_widgets::{MofaApp, AppRegistry, TimerControl, PageRouter, PageId, tab_clicked};
 use mofa_fm::{MoFaFMApp, MoFaFMScreenWidgetRefExt};
+use mofa_debate::MoFaDebateApp;
 use mofa_settings::MoFaSettingsApp;
 use mofa_settings::data::Preferences;
 use mofa_settings::screen::SettingsScreenWidgetRefExt;
@@ -364,6 +365,9 @@ pub struct App {
     /// Registry of installed apps (populated on init)
     #[rust]
     app_registry: AppRegistry,
+    /// Page router for managing page visibility
+    #[rust]
+    page_router: PageRouter,
     /// Theme manager from mofa-ui (handles dark mode with animation)
     #[rust]
     theme: MofaTheme,
@@ -385,7 +389,11 @@ impl LiveHook for App {
     fn after_new_from_doc(&mut self, _cx: &mut Cx) {
         // Initialize the app registry with all installed apps
         self.app_registry.register(MoFaFMApp::info());
+        self.app_registry.register(MoFaDebateApp::info());
         self.app_registry.register(MoFaSettingsApp::info());
+
+        // Initialize page router (defaults to MoFA FM)
+        self.page_router = PageRouter::new();
 
         // Initialize app_data with shared Dora state
         let dora_state = SharedDoraState::new();
@@ -451,6 +459,7 @@ impl LiveRegister for App {
         // Note: Widget types in live_design! macro still require compile-time imports
         // (Makepad constraint), but registration uses the standardized trait interface
         <MoFaFMApp as MofaApp>::live_design(cx);
+        <MoFaDebateApp as MofaApp>::live_design(cx);
         <MoFaSettingsApp as MofaApp>::live_design(cx);
 
         // Shell widgets (order matters - tabs before dashboard, apps before dashboard)
@@ -727,109 +736,96 @@ impl App {
     }
 
     /// Handle sidebar menu item clicks (both overlay and pinned sidebars)
+    /// Uses path-based click detection to avoid WidgetUid mismatch issues
     fn handle_sidebar_clicks(&mut self, cx: &mut Cx, actions: &[Action]) {
-        // MoFA FM tab (overlay or pinned)
-        let fm_clicked =
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.mofa_fm_tab)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.mofa_fm_tab)).clicked(actions);
+        // Use PageRouter to detect tab clicks via path-based search
+        if let Some(page) = self.page_router.check_tab_click(actions) {
+            ::log::info!("Tab clicked: {:?}", page);
+            self.navigate_to_page(cx, page);
+            return;
+        }
 
-        if fm_clicked {
-            // Close overlay if open
-            if self.sidebar_menu_open {
-                self.sidebar_menu_open = false;
-                self.start_sidebar_slide_out(cx);
-            }
-            self.open_tabs.clear();
-            self.active_tab = None;
-            self.ui.view(ids!(body.tab_overlay)).set_visible(cx, false);
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).apply_over(cx, live!{ visible: true });
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.app_page)).apply_over(cx, live!{ visible: false });
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.settings_page)).apply_over(cx, live!{ visible: false });
+        // App buttons (1-20) - use path-based detection
+        let app_btn_ids = [
+            live_id!(app1_btn), live_id!(app2_btn), live_id!(app3_btn), live_id!(app4_btn),
+            live_id!(app5_btn), live_id!(app6_btn), live_id!(app7_btn), live_id!(app8_btn),
+            live_id!(app9_btn), live_id!(app10_btn), live_id!(app11_btn), live_id!(app12_btn),
+            live_id!(app13_btn), live_id!(app14_btn), live_id!(app15_btn), live_id!(app16_btn),
+            live_id!(app17_btn), live_id!(app18_btn), live_id!(app19_btn), live_id!(app20_btn),
+        ];
+
+        let app_clicked = app_btn_ids.iter().any(|btn_id| tab_clicked(actions, *btn_id));
+        if app_clicked {
+            self.navigate_to_page(cx, PageId::App);
+        }
+    }
+
+    /// Navigate to a page using the PageRouter
+    fn navigate_to_page(&mut self, cx: &mut Cx, page: PageId) {
+        // Close overlay if open
+        if self.sidebar_menu_open {
+            self.sidebar_menu_open = false;
+            self.start_sidebar_slide_out(cx);
+        }
+
+        // Clear tabs
+        self.open_tabs.clear();
+        self.active_tab = None;
+        self.ui.view(ids!(body.tab_overlay)).set_visible(cx, false);
+
+        // Navigate router
+        let old_page = self.page_router.current();
+        if !self.page_router.navigate_to(page) {
+            return; // Already on this page
+        }
+
+        // Stop timers on old page if it was FM
+        if old_page == Some(PageId::MofaFM) {
+            self.ui.mo_fa_fmscreen(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).stop_timers(cx);
+        }
+
+        // Update page visibility
+        self.update_page_visibility(cx);
+
+        // Update hero title panel
+        self.update_hero_title(cx, page);
+
+        // Start timers on new page if it's FM
+        if page == PageId::MofaFM {
             self.ui.mo_fa_fmscreen(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).start_timers(cx);
-            self.ui.redraw(cx);
         }
 
-        // Settings tab (overlay or pinned)
-        let settings_clicked =
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.settings_tab)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.settings_tab)).clicked(actions);
+        self.ui.redraw(cx);
+    }
 
-        if settings_clicked {
-            // Close overlay if open
-            if self.sidebar_menu_open {
-                self.sidebar_menu_open = false;
-                self.start_sidebar_slide_out(cx);
-            }
-            self.open_tabs.clear();
-            self.active_tab = None;
-            self.ui.view(ids!(body.tab_overlay)).set_visible(cx, false);
-            self.ui.mo_fa_fmscreen(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).stop_timers(cx);
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).apply_over(cx, live!{ visible: false });
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.app_page)).apply_over(cx, live!{ visible: false });
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.settings_page)).apply_over(cx, live!{ visible: true });
-            self.ui.redraw(cx);
-        }
+    /// Update page visibility based on router state
+    fn update_page_visibility(&mut self, cx: &mut Cx) {
+        let current = self.page_router.current();
 
-        // App buttons (1-20) - check if any was clicked (overlay or pinned)
-        let app_clicked_overlay =
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app1_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app2_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app3_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app4_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app5_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app6_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app7_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app8_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app9_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app10_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app11_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app12_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app13_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app14_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app15_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app16_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app17_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app18_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app19_btn)).clicked(actions) ||
-            self.ui.button(ids!(sidebar_menu_overlay.sidebar_content.main_content.apps_wrapper.apps_scroll.app20_btn)).clicked(actions);
+        // Set visibility for each page
+        self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page))
+            .apply_over(cx, live!{ visible: (current == Some(PageId::MofaFM)) });
+        self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.debate_page))
+            .apply_over(cx, live!{ visible: (current == Some(PageId::Debate)) });
+        self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.app_page))
+            .apply_over(cx, live!{ visible: (current == Some(PageId::App)) });
+        self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.settings_page))
+            .apply_over(cx, live!{ visible: (current == Some(PageId::Settings)) });
+    }
 
-        let app_clicked_pinned =
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app1_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app2_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app3_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app4_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app5_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app6_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app7_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app8_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app9_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app10_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app11_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app12_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app13_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app14_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app15_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app16_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app17_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app18_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app19_btn)).clicked(actions) ||
-            self.ui.button(ids!(pinned_sidebar.pinned_sidebar_content.main_content.apps_wrapper.apps_scroll.app20_btn)).clicked(actions);
+    /// Update hero title panel with current app info
+    fn update_hero_title(&mut self, cx: &mut Cx, page: PageId) {
+        let (title, description) = match page {
+            PageId::MofaFM => ("MoFA FM", "AI-powered audio streaming and voice interface"),
+            PageId::Debate => ("MoFA Debate", "Multi-agent debate and discussion platform"),
+            PageId::Settings => ("Settings", "Configure providers and preferences"),
+            PageId::App => ("Demo App", "Select an app from the sidebar"),
+        };
 
-        if app_clicked_overlay || app_clicked_pinned {
-            // Close overlay if open
-            if self.sidebar_menu_open {
-                self.sidebar_menu_open = false;
-                self.start_sidebar_slide_out(cx);
-            }
-            self.open_tabs.clear();
-            self.active_tab = None;
-            self.ui.view(ids!(body.tab_overlay)).set_visible(cx, false);
-            self.ui.mo_fa_fmscreen(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).stop_timers(cx);
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.fm_page)).apply_over(cx, live!{ visible: false });
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.app_page)).apply_over(cx, live!{ visible: true });
-            self.ui.view(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.content.settings_page)).apply_over(cx, live!{ visible: false });
-            self.ui.redraw(cx);
-        }
+        self.ui.label(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.hero_title_panel.title_container.app_title))
+            .set_text(cx, title);
+        self.ui.label(ids!(body.dashboard_wrapper.dashboard_base.content_area.main_content.hero_title_panel.title_container.app_description))
+            .set_text(cx, description);
     }
 }
 

@@ -13,10 +13,9 @@ use makepad_widgets::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::mofa_hero::{MofaHeroWidgetExt, ConnectionStatus};
 use crate::dora_integration::{DoraIntegration, DoraEvent};
 use mofa_settings::data::Preferences;
-use mofa_ui::{AecButtonWidgetExt, MicButtonWidgetExt};
+use mofa_ui::{AecButtonWidgetExt, MicButtonWidgetExt, MofaHeroWidgetExt, ConnectionStatus};
 
 use super::{MoFaFMScreen, ChatMessageEntry};
 

@@ -17,8 +17,8 @@ mod role_config;
 use role_config::{RoleConfig, get_role_config_path, get_yaml_path, read_yaml_voice, VOICE_OPTIONS};
 
 use makepad_widgets::*;
-use crate::mofa_hero::{MofaHeroWidgetExt, MofaHeroAction};
-use crate::log_bridge;
+use mofa_ui::{MofaHeroWidgetExt, MofaHeroAction, AudioManager};
+use mofa_ui::log_bridge;
 use crate::dora_integration::{DoraIntegration, DoraCommand};
 use mofa_widgets::participant_panel::ParticipantPanelWidgetExt;
 use mofa_widgets::{StateChangeListener, TimerControl};
@@ -77,7 +77,7 @@ pub struct MoFaFMScreen {
     #[rust]
     splitter_dragging: bool,
     #[rust]
-    audio_manager: Option<crate::audio::AudioManager>,
+    audio_manager: Option<AudioManager>,
     #[rust]
     audio_timer: Timer,
     #[rust]

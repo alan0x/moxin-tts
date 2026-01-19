@@ -4,7 +4,8 @@
 
 use makepad_widgets::*;
 
-// Import widget types from mofa-ui for live_design macro expansion
+// Import widget types from mofa-ui for Rust code (WidgetExt traits)
+// Note: Live design uses inline definitions due to Makepad parser limitations
 use mofa_ui::{LedMeter, MicButton, AecButton};
 
 use super::MoFaFMScreen;
@@ -17,7 +18,7 @@ live_design! {
     use mofa_widgets::theme::*;
     use mofa_widgets::participant_panel::ParticipantPanel;
     use mofa_widgets::log_panel::LogPanel;
-    use crate::mofa_hero::MofaHero;
+    use mofa_ui::widgets::mofa_hero::MofaHero;
 
     // Local layout constants (colors imported from theme)
     SECTION_SPACING = 12.0
@@ -25,6 +26,7 @@ live_design! {
     PANEL_PADDING = 12.0
 
     // Individual LED component for level meters
+    // Note: Inline definition required due to Makepad parser issues with shared widgets
     Led = <RoundedView> {
         width: 8
         height: 14

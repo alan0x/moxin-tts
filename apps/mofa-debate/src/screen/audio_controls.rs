@@ -4,13 +4,14 @@
 
 use makepad_widgets::*;
 use mofa_settings::data::Preferences;
+use mofa_ui::{LedMeterWidgetExt, LedColors};
 
 use super::MoFaDebateScreen;
 
 impl MoFaDebateScreen {
     /// Initialize audio manager and populate device dropdowns
     pub(super) fn init_audio(&mut self, cx: &mut Cx) {
-        let mut audio_manager = crate::audio::AudioManager::new();
+        let mut audio_manager = mofa_ui::AudioManager::new();
 
         // Load saved preferences
         let prefs = Preferences::load();
@@ -137,140 +138,30 @@ impl MoFaDebateScreen {
             return;
         };
 
-        // Map level (0.0-1.0) to 5 LEDs
         // Use non-linear scaling for better visualization (human hearing is logarithmic)
         let scaled_level = (level * 3.0).min(1.0); // Amplify for visibility
-        let active_leds = (scaled_level * 5.0).ceil() as u32;
 
-        // Colors as vec4: green=#22c55f, yellow=#eab308, orange=#f97316, red=#ef4444, off=#e2e8f0
-        let green = vec4(0.133, 0.773, 0.373, 1.0);
-        let yellow = vec4(0.918, 0.702, 0.031, 1.0);
-        let orange = vec4(0.976, 0.451, 0.086, 1.0);
-        let red = vec4(0.937, 0.267, 0.267, 1.0);
-        let off = vec4(0.886, 0.910, 0.941, 1.0);
-
-        // LED colors by index: 0,1=green, 2=yellow, 3=orange, 4=red
-        let led_colors = [green, green, yellow, orange, red];
-        let led_ids = [
-            ids!(
-                audio_container
-                    .mic_container
-                    .mic_group
-                    .mic_level_meter
-                    .mic_led_1
-            ),
-            ids!(
-                audio_container
-                    .mic_container
-                    .mic_group
-                    .mic_level_meter
-                    .mic_led_2
-            ),
-            ids!(
-                audio_container
-                    .mic_container
-                    .mic_group
-                    .mic_level_meter
-                    .mic_led_3
-            ),
-            ids!(
-                audio_container
-                    .mic_container
-                    .mic_group
-                    .mic_level_meter
-                    .mic_led_4
-            ),
-            ids!(
-                audio_container
-                    .mic_container
-                    .mic_group
-                    .mic_level_meter
-                    .mic_led_5
-            ),
-        ];
-
-        for (i, led_id) in led_ids.iter().enumerate() {
-            let is_active = (i + 1) as u32 <= active_leds;
-            let color = if is_active { led_colors[i] } else { off };
-            self.view.view(led_id.clone()).apply_over(
-                cx,
-                live! {
-                    draw_bg: { color: (color) }
-                },
-            );
-        }
-
-        self.view.redraw(cx);
+        // Use the shared LedMeter widget with set_level API
+        self.view
+            .led_meter(ids!(audio_container.mic_container.mic_group.mic_level_meter))
+            .set_level(cx, scaled_level);
     }
 
     /// Update buffer level LEDs based on audio buffer fill percentage
     pub(super) fn update_buffer_level(&mut self, cx: &mut Cx, level: f64) {
-        // Map level (0.0-1.0) to 5 LEDs
-        let active_leds = (level * 5.0).ceil() as u32;
-
-        // Colors: blue for normal, yellow for warning, red for critical
-        let blue = vec4(0.23, 0.51, 0.97, 1.0); // Normal buffer level
-        let yellow = vec4(0.918, 0.702, 0.031, 1.0); // Warning (80%+)
-        let red = vec4(0.937, 0.267, 0.267, 1.0); // Critical (95%+)
-        let off = vec4(0.886, 0.910, 0.941, 1.0); // LED off
-
-        // LED colors based on level thresholds
-        let base_color = if level >= 0.95 {
-            red
+        // Set colors based on level thresholds
+        let colors = if level >= 0.95 {
+            LedColors::uniform(0.937, 0.267, 0.267) // Red - critical
         } else if level >= 0.8 {
-            yellow
+            LedColors::uniform(0.918, 0.702, 0.031) // Yellow - warning
         } else {
-            blue
+            LedColors::blue() // Blue - normal
         };
 
-        let led_ids = [
-            ids!(
-                audio_container
-                    .buffer_container
-                    .buffer_group
-                    .buffer_meter
-                    .buffer_led_1
-            ),
-            ids!(
-                audio_container
-                    .buffer_container
-                    .buffer_group
-                    .buffer_meter
-                    .buffer_led_2
-            ),
-            ids!(
-                audio_container
-                    .buffer_container
-                    .buffer_group
-                    .buffer_meter
-                    .buffer_led_3
-            ),
-            ids!(
-                audio_container
-                    .buffer_container
-                    .buffer_group
-                    .buffer_meter
-                    .buffer_led_4
-            ),
-            ids!(
-                audio_container
-                    .buffer_container
-                    .buffer_group
-                    .buffer_meter
-                    .buffer_led_5
-            ),
-        ];
-
-        for (i, led_id) in led_ids.iter().enumerate() {
-            let is_active = (i + 1) as u32 <= active_leds;
-            let color = if is_active { base_color } else { off };
-            self.view.view(led_id.clone()).apply_over(
-                cx,
-                live! {
-                    draw_bg: { color: (color) }
-                },
-            );
-        }
+        // Use the shared LedMeter widget with set_level API
+        let meter = self.view.led_meter(ids!(audio_container.buffer_container.buffer_group.buffer_meter));
+        meter.set_colors(colors);
+        meter.set_level(cx, level as f32);
 
         // Update percentage label
         let pct_text = format!("{}%", (level * 100.0) as u32);
@@ -279,8 +170,6 @@ impl MoFaDebateScreen {
                 audio_container.buffer_container.buffer_group.buffer_pct
             ))
             .set_text(cx, &pct_text);
-
-        self.view.redraw(cx);
     }
 
     /// Select input device for mic monitoring

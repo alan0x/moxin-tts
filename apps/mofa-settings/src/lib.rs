@@ -8,7 +8,7 @@ pub mod screen;
 
 pub use screen::SettingsScreenRef;
 
-use makepad_widgets::Cx;
+use makepad_widgets::{Cx, live_id, LiveId};
 use mofa_widgets::{AppInfo, MofaApp};
 
 /// MoFA Settings app descriptor
@@ -20,6 +20,10 @@ impl MofaApp for MoFaSettingsApp {
             name: "Settings",
             id: "mofa-settings",
             description: "Provider configuration and preferences",
+            tab_id: Some(live_id!(settings_tab)),
+            page_id: Some(live_id!(settings_page)),
+            show_in_sidebar: false, // Settings is shown separately
+            ..Default::default()
         }
     }
 

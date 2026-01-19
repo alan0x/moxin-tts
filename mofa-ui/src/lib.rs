@@ -99,12 +99,19 @@ pub mod theme;
 pub mod traits;
 pub mod widgets;
 pub mod shell;
+pub mod system_monitor;
+pub mod audio;
+pub mod log_bridge;
 
 // Re-export main types for convenience
 pub use registry::{MofaWidgetRegistry, MofaWidgetDef, WidgetCategory, WidgetSize};
 pub use app_data::{MofaAppData, AppConfig};
 pub use theme::{MofaTheme, ThemeColor, ThemeListener, THEME_TRANSITION_DURATION};
 pub use traits::{MofaWidget, Themeable, DoraConnected, Maximizable, Clearable, Animated, Focusable};
+
+// Re-export shared infrastructure
+pub use audio::{AudioManager, AudioDeviceInfo, MicLevelState};
+pub use log_bridge::{LogMessage, init as log_bridge_init, poll_logs, receiver as log_receiver};
 
 // Re-export widgets and their WidgetExt traits
 pub use widgets::{
@@ -120,6 +127,8 @@ pub use widgets::{
     RoleEditor, RoleEditorRef, RoleEditorWidgetExt, RoleEditorAction, RoleConfig,
     DataflowPicker, DataflowPickerRef, DataflowPickerWidgetExt, DataflowPickerAction,
     ProviderSelector, ProviderSelectorRef, ProviderSelectorWidgetExt, ProviderSelectorAction, ProviderInfo,
+    // Hero widgets (Phase 5)
+    MofaHero, MofaHeroRef, MofaHeroWidgetExt, MofaHeroAction, ConnectionStatus,
 };
 
 // Re-export shell components (Phase 5)
@@ -127,7 +136,7 @@ pub use shell::{
     MofaShell, MofaShellRef, MofaShellWidgetExt, MofaShellAction,
     ShellHeader, ShellHeaderRef, ShellHeaderWidgetExt, ShellHeaderAction,
     ShellSidebar, ShellSidebarRef, ShellSidebarWidgetExt, ShellSidebarAction,
-    StatusBar, StatusBarRef, StatusBarWidgetExt, StatusBarAction, ConnectionStatus,
+    StatusBar, StatusBarRef, StatusBarWidgetExt, StatusBarAction,
     SidebarItem,
 };
 

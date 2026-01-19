@@ -11,7 +11,7 @@ use super::MoFaFMScreen;
 impl MoFaFMScreen {
     /// Initialize audio manager and populate device dropdowns
     pub(super) fn init_audio(&mut self, cx: &mut Cx) {
-        let mut audio_manager = crate::audio::AudioManager::new();
+        let mut audio_manager = mofa_ui::AudioManager::new();
 
         // Load saved preferences
         let prefs = Preferences::load();

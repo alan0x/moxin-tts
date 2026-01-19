@@ -59,7 +59,7 @@
 //! }
 //! ```
 
-use makepad_widgets::Cx;
+use makepad_widgets::{Cx, LiveId, Action, live_id, ButtonAction, WidgetActionCast};
 
 /// Metadata about a registered app
 #[derive(Clone, Debug)]
@@ -70,6 +70,130 @@ pub struct AppInfo {
     pub id: &'static str,
     /// Description of the app
     pub description: &'static str,
+    /// LiveId for the sidebar tab button (for click detection)
+    pub tab_id: Option<LiveId>,
+    /// LiveId for the page view (for visibility control)
+    pub page_id: Option<LiveId>,
+    /// Whether this app is shown in the main sidebar (vs settings/system apps)
+    pub show_in_sidebar: bool,
+}
+
+impl Default for AppInfo {
+    fn default() -> Self {
+        Self {
+            name: "",
+            id: "",
+            description: "",
+            tab_id: None,
+            page_id: None,
+            show_in_sidebar: true,
+        }
+    }
+}
+
+/// Page identifiers for routing
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PageId {
+    /// MoFA FM main app
+    MofaFM,
+    /// Debate app
+    Debate,
+    /// Settings page
+    Settings,
+    /// Generic app page (for demo apps)
+    App,
+}
+
+impl PageId {
+    /// Get the LiveId for this page's tab button
+    pub fn tab_live_id(&self) -> LiveId {
+        match self {
+            PageId::MofaFM => live_id!(mofa_fm_tab),
+            PageId::Debate => live_id!(debate_tab),
+            PageId::Settings => live_id!(settings_tab),
+            PageId::App => live_id!(app_tab),
+        }
+    }
+
+    /// Get the LiveId for this page's view
+    pub fn page_live_id(&self) -> LiveId {
+        match self {
+            PageId::MofaFM => live_id!(fm_page),
+            PageId::Debate => live_id!(debate_page),
+            PageId::Settings => live_id!(settings_page),
+            PageId::App => live_id!(app_page),
+        }
+    }
+}
+
+/// Router for managing page visibility and navigation
+///
+/// Centralizes page switching logic to avoid repetitive visibility code.
+#[derive(Default)]
+pub struct PageRouter {
+    /// Currently active page
+    current_page: Option<PageId>,
+    /// All registered pages
+    pages: Vec<PageId>,
+}
+
+impl PageRouter {
+    pub fn new() -> Self {
+        Self {
+            current_page: Some(PageId::MofaFM), // Default to FM
+            pages: vec![PageId::MofaFM, PageId::Debate, PageId::Settings, PageId::App],
+        }
+    }
+
+    /// Get the current active page
+    pub fn current(&self) -> Option<PageId> {
+        self.current_page
+    }
+
+    /// Navigate to a page, returns true if page changed
+    pub fn navigate_to(&mut self, page: PageId) -> bool {
+        if self.current_page == Some(page) {
+            return false;
+        }
+        self.current_page = Some(page);
+        true
+    }
+
+    /// Get all pages that should be hidden (all except current)
+    pub fn pages_to_hide(&self) -> impl Iterator<Item = PageId> + '_ {
+        self.pages.iter().copied().filter(move |p| Some(*p) != self.current_page)
+    }
+
+    /// Check if any registered tab was clicked in actions (uses path-based detection)
+    /// Returns the PageId if a tab click was detected
+    pub fn check_tab_click(&self, actions: &[Action]) -> Option<PageId> {
+        for action in actions {
+            if let Some(wa) = action.as_widget_action() {
+                if let ButtonAction::Clicked(_) = wa.cast() {
+                    // Check each page's tab_id against the action path
+                    for page in &self.pages {
+                        let tab_id = page.tab_live_id();
+                        if wa.path.data.iter().any(|id| *id == tab_id) {
+                            return Some(*page);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Helper to check if a specific tab was clicked using path-based detection
+/// This avoids WidgetUid mismatch issues with nested widgets
+pub fn tab_clicked(actions: &[Action], tab_id: LiveId) -> bool {
+    actions.iter().filter_map(|a| a.as_widget_action()).any(|wa| {
+        if let ButtonAction::Clicked(_) = wa.cast() {
+            wa.path.data.iter().any(|id| *id == tab_id)
+        } else {
+            false
+        }
+    })
 }
 
 /// Trait for apps that integrate with MoFA Studio shell

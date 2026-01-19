@@ -171,45 +171,6 @@ mod macos_gpu {
     }
 }
 
-// ============================================================================
-// NVIDIA GPU monitoring using nvml-wrapper (commented out for macOS builds)
-// Uncomment this section for Linux/Windows with NVIDIA GPU support
-// ============================================================================
-
-/*
-// NVIDIA GPU monitoring - requires nvml-wrapper crate
-// Add to Cargo.toml: nvml-wrapper = "0.10"
-mod nvidia_gpu {
-    use nvml_wrapper::Nvml;
-
-    pub struct NvidiaGpu {
-        nvml: Nvml,
-        device_index: u32,
-    }
-
-    impl NvidiaGpu {
-        pub fn new() -> Option<Self> {
-            let nvml = Nvml::init().ok()?;
-            // Try to get first device
-            nvml.device_by_index(0).ok()?;
-            Some(Self { nvml, device_index: 0 })
-        }
-
-        pub fn get_utilization(&self) -> Option<f64> {
-            let device = self.nvml.device_by_index(self.device_index).ok()?;
-            let utilization = device.utilization_rates().ok()?;
-            Some(utilization.gpu as f64 / 100.0)
-        }
-
-        pub fn get_vram_usage(&self) -> Option<(u64, u64)> {
-            let device = self.nvml.device_by_index(self.device_index).ok()?;
-            let memory = device.memory_info().ok()?;
-            Some((memory.used, memory.total))
-        }
-    }
-}
-*/
-
 /// Start the background system monitor thread if not already running.
 /// This should be called once at app startup.
 pub fn start_system_monitor() {
@@ -238,28 +199,6 @@ pub fn start_system_monitor() {
                         log::info!("GPU monitoring enabled (macOS - limited stats available)");
                     }
                 }
-
-                // ============================================================
-                // NVIDIA GPU monitoring initialization (commented out)
-                // Uncomment for Linux/Windows with NVIDIA GPU
-                // ============================================================
-                /*
-                #[cfg(not(target_os = "macos"))]
-                let nvidia_gpu = {
-                    // Try to initialize NVML for GPU monitoring
-                    let nvml = nvml_wrapper::Nvml::init().ok();
-                    let device = nvml.as_ref().and_then(|n| n.device_by_index(0).ok());
-
-                    if device.is_some() {
-                        stats_clone.gpu_available.store(true, Ordering::Relaxed);
-                        log::info!("GPU monitoring enabled (NVIDIA)");
-                    } else {
-                        log::info!("GPU monitoring not available (no NVIDIA GPU or NVML not installed)");
-                    }
-
-                    (nvml, device.is_some())
-                };
-                */
 
                 #[cfg(not(target_os = "macos"))]
                 {
@@ -307,33 +246,6 @@ pub fn start_system_monitor() {
                             }
                         }
                     }
-
-                    // ========================================================
-                    // NVIDIA GPU monitoring (commented out)
-                    // Uncomment for Linux/Windows with NVIDIA GPU
-                    // ========================================================
-                    /*
-                    #[cfg(not(target_os = "macos"))]
-                    if let (Some(ref nvml), true) = (&nvidia_gpu.0, nvidia_gpu.1) {
-                        if let Ok(device) = nvml.device_by_index(0) {
-                            // GPU utilization
-                            if let Ok(utilization) = device.utilization_rates() {
-                                let gpu_pct = (utilization.gpu as u32) * 100; // Scale to 0-10000
-                                stats_clone.gpu_usage.store(gpu_pct, Ordering::Relaxed);
-                            }
-
-                            // VRAM usage
-                            if let Ok(memory_info) = device.memory_info() {
-                                let vram_pct = if memory_info.total > 0 {
-                                    ((memory_info.used as f64 / memory_info.total as f64) * 10000.0) as u32
-                                } else {
-                                    0
-                                };
-                                stats_clone.vram_usage.store(vram_pct, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    */
 
                     // Sleep for 1 second
                     thread::sleep(Duration::from_secs(1));
