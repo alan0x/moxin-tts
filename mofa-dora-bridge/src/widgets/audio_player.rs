@@ -808,7 +808,9 @@ impl DoraBridge for AudioPlayerBridge {
                 if let Some(status) = val.as_f64() {
                     // Use try_send to avoid blocking the worker thread if channel is full
                     // Buffer status updates are frequent and non-critical - dropping some is OK
-                    let _ = self.buffer_status_sender.try_send(status);
+                    if let Err(e) = self.buffer_status_sender.try_send(status) {
+                        warn!("Failed to send buffer status update: {}", e);
+                    }
                 }
             }
             _ => {

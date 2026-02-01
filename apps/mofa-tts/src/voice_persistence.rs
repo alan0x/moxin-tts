@@ -179,7 +179,16 @@ pub fn copy_reference_audio(voice_id: &str, source_path: &PathBuf) -> Result<Str
     Ok(format!("{}/ref.wav", voice_id))
 }
 
-/// Validate audio file (check duration, format, etc.)
+/// Validate audio file for voice cloning
+///
+/// Hard limits (rejected):
+/// - Duration < 1 second: Too short for voice cloning
+/// - Duration > 30 seconds: Too long, may degrade quality
+///
+/// Recommended range (warnings):
+/// - Duration 3-10 seconds: Optimal for voice cloning quality
+///
+/// Returns AudioInfo with validation warnings, or Err if hard limits exceeded.
 pub fn validate_audio_file(path: &PathBuf) -> Result<AudioInfo, String> {
     use hound::WavReader;
 
@@ -198,18 +207,40 @@ pub fn validate_audio_file(path: &PathBuf) -> Result<AudioInfo, String> {
     let num_samples = reader.len() as f32;
     let duration_secs = num_samples / (sample_rate as f32 * channels as f32);
 
-    // Validate duration (3-10 seconds recommended)
-    let mut warnings = Vec::new();
-    if duration_secs < 3.0 {
-        warnings.push(format!(
-            "Audio is shorter than recommended ({:.1}s < 3s)",
-            duration_secs
+    // Validate duration with hard limits and warnings
+    // Hard limits: reject files < 1s or > 30s (unusable for voice cloning)
+    // Recommended: 3-10 seconds for optimal quality
+    const MIN_DURATION_HARD: f32 = 1.0;
+    const MAX_DURATION_HARD: f32 = 30.0;
+    const MIN_DURATION_RECOMMENDED: f32 = 3.0;
+    const MAX_DURATION_RECOMMENDED: f32 = 10.0;
+
+    // Hard limit validation - reject immediately
+    if duration_secs < MIN_DURATION_HARD {
+        return Err(format!(
+            "Audio too short for voice cloning: {:.1}s (minimum: {}s)",
+            duration_secs, MIN_DURATION_HARD
         ));
     }
-    if duration_secs > 10.0 {
+    if duration_secs > MAX_DURATION_HARD {
+        return Err(format!(
+            "Audio too long for voice cloning: {:.1}s (maximum: {}s)",
+            duration_secs, MAX_DURATION_HARD
+        ));
+    }
+
+    // Soft limit validation - warn but allow
+    let mut warnings = Vec::new();
+    if duration_secs < MIN_DURATION_RECOMMENDED {
         warnings.push(format!(
-            "Audio is longer than recommended ({:.1}s > 10s)",
-            duration_secs
+            "Audio shorter than recommended ({:.1}s < {}s) - may affect cloning quality",
+            duration_secs, MIN_DURATION_RECOMMENDED
+        ));
+    }
+    if duration_secs > MAX_DURATION_RECOMMENDED {
+        warnings.push(format!(
+            "Audio longer than recommended ({:.1}s > {}s) - may affect cloning quality",
+            duration_secs, MAX_DURATION_RECOMMENDED
         ));
     }
 
@@ -233,7 +264,12 @@ pub struct AudioInfo {
 }
 
 /// Generate a unique voice ID from a name
+///
+/// Combines sanitized name + timestamp + random suffix to ensure uniqueness
+/// even when multiple voices are created in the same second.
 pub fn generate_voice_id(name: &str) -> String {
+    use rand::Rng;
+
     // Sanitize the name for use as an ID
     let base_id: String = name
         .chars()
@@ -252,13 +288,20 @@ pub fn generate_voice_id(name: &str) -> String {
         base_id
     };
 
-    // Add timestamp to ensure uniqueness
+    // Add timestamp for temporal ordering
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    format!("{}_{}", base_id, timestamp)
+    // Add random suffix (4 alphanumeric chars) to prevent collisions
+    let random_suffix: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(4)
+        .map(char::from)
+        .collect();
+
+    format!("{}_{}_{}", base_id, timestamp, random_suffix.to_lowercase())
 }
 
 /// Get the full path to a custom voice's reference audio

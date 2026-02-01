@@ -30,6 +30,8 @@ struct CircularAudioBuffer {
     read_pos: usize,
     available_samples: usize,
     buffer_size: usize,
+    /// Counter for samples dropped due to buffer overflow
+    dropped_samples: usize,
 }
 
 impl CircularAudioBuffer {
@@ -41,11 +43,14 @@ impl CircularAudioBuffer {
             read_pos: 0,
             available_samples: 0,
             buffer_size,
+            dropped_samples: 0,
         }
     }
 
     fn write(&mut self, samples: &[f32]) -> usize {
         let mut written = 0;
+        let mut dropped_in_write = 0;
+
         for &sample in samples {
             if self.available_samples < self.buffer_size {
                 self.buffer[self.write_pos] = sample;
@@ -58,9 +63,21 @@ impl CircularAudioBuffer {
                 self.buffer[self.write_pos] = sample;
                 self.write_pos = (self.write_pos + 1) % self.buffer_size;
                 self.read_pos = (self.read_pos + 1) % self.buffer_size;
+                self.dropped_samples += 1;
+                dropped_in_write += 1;
                 written += 1;
             }
         }
+
+        // Log warning if samples were dropped
+        if dropped_in_write > 0 {
+            log::warn!(
+                "Audio buffer overflow: dropped {} samples (total dropped: {})",
+                dropped_in_write,
+                self.dropped_samples
+            );
+        }
+
         written
     }
 
@@ -83,10 +100,16 @@ impl CircularAudioBuffer {
         self.write_pos = 0;
         self.read_pos = 0;
         self.available_samples = 0;
+        self.dropped_samples = 0;
     }
 
     fn available(&self) -> usize {
         self.available_samples
+    }
+
+    /// Get the total number of samples dropped due to buffer overflow
+    fn dropped(&self) -> usize {
+        self.dropped_samples
     }
 }
 

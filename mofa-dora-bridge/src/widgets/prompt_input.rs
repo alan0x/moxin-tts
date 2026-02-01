@@ -371,7 +371,20 @@ impl DoraBridge for PromptInputBridge {
                 ));
             }
             (output, data_type) => {
-                warn!("Unknown output '{}' with data type {:?}", output, std::any::type_name_of_val(&data_type));
+                let data_type_name = match &data_type {
+                    DoraData::Text(_) => "Text",
+                    DoraData::Audio(_) => "Audio",
+                    DoraData::Control(_) => "Control",
+                    DoraData::Json(_) => "Json",
+                    DoraData::Binary(_) => "Binary",
+                    DoraData::Log(_) => "Log",
+                    DoraData::Chat(_) => "Chat",
+                    DoraData::Empty => "Empty",
+                };
+                warn!(
+                    "Unknown output '{}' with data type {}",
+                    output, data_type_name
+                );
                 return Err(BridgeError::NotSupported(
                     format!("Output '{}' not supported by PromptInputBridge", output)
                 ));

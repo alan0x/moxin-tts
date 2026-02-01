@@ -1357,6 +1357,51 @@ impl Widget for VoiceCloneModal {
 }
 
 impl VoiceCloneModal {
+    /// Clean up old temporary recording files from previous sessions
+    ///
+    /// Removes temp files older than 1 hour to prevent disk buildup.
+    /// Should be called on app startup or modal initialization.
+    pub fn cleanup_old_temp_files() {
+        use std::fs;
+        use std::time::{Duration, SystemTime};
+
+        let temp_dir = std::env::temp_dir();
+
+        // Try to read temp directory
+        let entries = match fs::read_dir(&temp_dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("[VoiceClone] Failed to read temp dir for cleanup: {}", e);
+                return;
+            }
+        };
+
+        let threshold = SystemTime::now() - Duration::from_secs(3600); // 1 hour
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+
+            // Only process our temp files
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("voice_clone_recording_") && name.ends_with(".wav") {
+                    // Check file age
+                    if let Ok(metadata) = fs::metadata(&path) {
+                        if let Ok(modified) = metadata.modified() {
+                            if modified < threshold {
+                                // File is older than threshold, remove it
+                                if let Err(e) = fs::remove_file(&path) {
+                                    eprintln!("[VoiceClone] Failed to remove old temp file {:?}: {}", path, e);
+                                } else {
+                                    eprintln!("[VoiceClone] Cleaned up old temp file: {:?}", path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn add_log(&mut self, cx: &mut Cx, message: &str) {
         self.log_messages.push(message.to_string());
         let log_text = self.log_messages.join("\n");
@@ -2080,6 +2125,17 @@ impl VoiceCloneModal {
                 duration
             );
 
+            // Validate duration in processing thread (defensive check)
+            // This prevents race conditions or edge cases where short recordings slip through
+            const MIN_DURATION: f32 = 3.0;
+            if duration < MIN_DURATION {
+                eprintln!(
+                    "[VoiceClone] ERROR: Recording too short ({:.1}s < {}s), aborting processing",
+                    duration, MIN_DURATION
+                );
+                return;
+            }
+
             // Resample to 16kHz if needed
             let target_sample_rate: u32 = 16000;
             let resampled: Vec<f32> = if source_sample_rate != target_sample_rate {
@@ -2107,10 +2163,18 @@ impl VoiceCloneModal {
                 final_duration
             );
 
-            // Save to temp file
+            // Save to temp file with unique name to prevent conflicts
+            // Uses PID + nanosecond timestamp to ensure uniqueness even if PID is reused
             let temp_dir = std::env::temp_dir();
-            let temp_file =
-                temp_dir.join(format!("voice_clone_recording_{}.wav", std::process::id()));
+            let unique_suffix = format!(
+                "{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            );
+            let temp_file = temp_dir.join(format!("voice_clone_recording_{}.wav", unique_suffix));
 
             if let Err(e) = Self::save_wav_static(&temp_file, &trimmed_samples, target_sample_rate)
             {
@@ -2129,11 +2193,66 @@ impl VoiceCloneModal {
     }
 
     /// Simple linear interpolation resampling
+    /// High-quality audio resampling using sinc interpolation with anti-aliasing
+    ///
+    /// Uses the rubato library which implements proper anti-aliasing filters
+    /// to prevent artifacts when upsampling or downsampling.
     fn resample(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
+        use rubato::{
+            Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+
         if source_rate == target_rate {
             return samples.to_vec();
         }
 
+        // Calculate resampling ratio
+        let resample_ratio = target_rate as f64 / source_rate as f64;
+
+        // Create high-quality sinc resampler
+        // Parameters chosen for good quality/performance balance for voice:
+        // - sinc_len: 256 (higher = better quality but slower)
+        // - f_cutoff: 0.95 (cutoff frequency relative to Nyquist)
+        // - oversampling_factor: 256 (interpolation quality)
+        // - window: BlackmanHarris2 (good sidelobe suppression)
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.95,
+            oversampling_factor: 256,
+            interpolation: SincInterpolationType::Linear,
+            window: WindowFunction::BlackmanHarris2,
+        };
+
+        let mut resampler = SincFixedIn::<f32>::new(
+            resample_ratio,
+            2.0,      // max_resample_ratio_relative (allows ±2x variation)
+            params,
+            samples.len(),
+            1,        // mono (1 channel)
+        )
+        .expect("Failed to create resampler");
+
+        // Rubato expects input as Vec<Vec<f32>> for multi-channel
+        // We have mono, so wrap in a single-channel vec
+        let input_frames = vec![samples.to_vec()];
+
+        // Process resampling
+        match resampler.process(&input_frames, None) {
+            Ok(output_frames) => {
+                // Extract the mono channel
+                output_frames[0].clone()
+            }
+            Err(e) => {
+                eprintln!("[VoiceClone] Resampling error: {}, falling back to linear interpolation", e);
+                // Fallback to simple linear interpolation on error
+                Self::resample_linear_fallback(samples, source_rate, target_rate)
+            }
+        }
+    }
+
+    /// Fallback linear interpolation resampler (used if rubato fails)
+    fn resample_linear_fallback(samples: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
         let ratio = target_rate as f64 / source_rate as f64;
         let new_len = (samples.len() as f64 * ratio) as usize;
         let mut result = Vec::with_capacity(new_len);
@@ -2258,6 +2377,11 @@ impl VoiceCloneModal {
 impl VoiceCloneModalRef {
     /// Show the modal
     pub fn show(&self, cx: &mut Cx) {
+        // Clean up old temp files from previous sessions (async, non-blocking)
+        std::thread::spawn(|| {
+            VoiceCloneModal::cleanup_old_temp_files();
+        });
+
         if let Some(mut inner) = self.borrow_mut() {
             inner.view.set_visible(cx, true);
             inner.clear_log(cx);

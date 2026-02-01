@@ -22,6 +22,10 @@ from .moyoyo_tts_wrapper_streaming_fix import StreamingMoYoYoTTSWrapper as MoYoY
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'dora-common'))
 from dora_common.logging import send_log as common_send_log, get_log_level_from_env
 
+# Voice format parsing constants
+VOICE_PREFIX = "VOICE:"
+VOICE_CUSTOM_PREFIX = "VOICE:CUSTOM|"
+
 
 def send_log(node, level, message, config_level="INFO"):
     """Wrapper for backward compatibility during migration to common logging."""
@@ -288,12 +292,13 @@ def main():
                 text = raw_text
                 custom_voice_config = None  # For custom voices
 
-                if raw_text.startswith("VOICE:"):
+                if raw_text.startswith(VOICE_PREFIX):
                     try:
                         # Check for custom voice format
-                        if raw_text.startswith("VOICE:CUSTOM|"):
+                        if raw_text.startswith(VOICE_CUSTOM_PREFIX):
                             # Parse custom voice format: VOICE:CUSTOM|ref_audio|prompt_text|language|text
-                            parts = raw_text[13:].split("|", 3)  # Remove "VOICE:CUSTOM|" and split into 4 parts
+                            # Remove prefix robustly using len() instead of hardcoded index
+                            parts = raw_text[len(VOICE_CUSTOM_PREFIX):].split("|", 3)
                             if len(parts) == 4:
                                 ref_audio_path, prompt_text, lang, text = parts
                                 print(f"DEBUG: Parsed CUSTOM VOICE - ref_audio: '{ref_audio_path}', prompt: '{prompt_text[:30]}...', lang: '{lang}'", file=sys.stderr, flush=True)
@@ -318,7 +323,8 @@ def main():
                             # Parse built-in voice format: VOICE:voice_name|text
                             parts = raw_text.split("|", 1)
                             if len(parts) == 2:
-                                voice_prefix = parts[0][6:].strip()  # Remove "VOICE:" prefix and trim whitespace
+                                # Remove "VOICE:" prefix robustly using len() instead of hardcoded index
+                                voice_prefix = parts[0][len(VOICE_PREFIX):].strip()
                                 text = parts[1]
 
                                 print(f"DEBUG: Parsed VOICE - name: '{voice_prefix}', text: '{text}'", file=sys.stderr, flush=True)
@@ -336,7 +342,7 @@ def main():
                         send_log(node, "WARNING", f"Failed to parse VOICE: prefix: {e}, using raw text", config.LOG_LEVEL)
 
                 # DEBUG: Log what we received (show only processed text, not the full VOICE: string)
-                if raw_text.startswith("VOICE:"):
+                if raw_text.startswith(VOICE_PREFIX):
                     send_log(node, "DEBUG", f"RECEIVED with VOICE prefix, parsed text: '{text[:50]}...', voice={current_voice_name}", config.LOG_LEVEL)
                 else:
                     send_log(node, "DEBUG", f"RECEIVED text: '{text}' (len={len(text)}, voice={current_voice_name})", config.LOG_LEVEL)

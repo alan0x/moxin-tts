@@ -46,6 +46,37 @@ pub enum DoraEvent {
     AsrTranscription { text: String, language: String },
 }
 
+/// Helper function to send data with retry logic
+///
+/// Retries up to 10 times with 150ms delay between attempts (1.5s total).
+/// This is reduced from 20 retries to minimize thread blocking in the worker.
+fn send_with_retry(
+    bridge: &dyn mofa_dora_bridge::DoraBridge,
+    output: &str,
+    data: mofa_dora_bridge::DoraData,
+) -> Result<(), String> {
+    const MAX_RETRIES: u32 = 10;
+    const RETRY_DELAY_MS: u64 = 150;
+
+    for attempt in 1..=MAX_RETRIES {
+        match bridge.send(output, data.clone()) {
+            Ok(_) => {
+                if attempt > 1 {
+                    log::info!("Successfully sent data on attempt {}", attempt);
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                if attempt == MAX_RETRIES {
+                    return Err(format!("Failed after {} retries: {}", MAX_RETRIES, e));
+                }
+                std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+            }
+        }
+    }
+    Err("Retry exhausted".into())
+}
+
 /// Dora integration manager
 pub struct DoraIntegration {
     /// Whether dataflow is currently running
@@ -306,29 +337,6 @@ impl DoraIntegration {
                     }
 
                     DoraCommand::SendPrompt { message } => {
-                        // Retry logic
-                        let send_with_retry = |bridge: &dyn mofa_dora_bridge::DoraBridge,
-                                               output: &str,
-                                               data: mofa_dora_bridge::DoraData|
-                         -> Result<(), String> {
-                            let retries = 20;
-                            for attempt in 1..=retries {
-                                match bridge.send(output, data.clone()) {
-                                    Ok(_) => {
-                                        println!("Sent data on attempt {}", attempt);
-                                        return Ok(());
-                                    }
-                                    Err(e) => {
-                                        if attempt == retries {
-                                            return Err(e.to_string());
-                                        }
-                                        std::thread::sleep(Duration::from_millis(150));
-                                    }
-                                }
-                            }
-                            Err("retry exhausted".into())
-                        };
-
                         if let Some(ref disp) = dispatcher {
                             // Try generic prompt input bridge or TTS-specific one if we define it in dataflow
                             if let Some(bridge) = disp
@@ -354,28 +362,6 @@ impl DoraIntegration {
                         sample_rate,
                         language,
                     } => {
-                        let send_with_retry = |bridge: &dyn mofa_dora_bridge::DoraBridge,
-                                               output: &str,
-                                               data: mofa_dora_bridge::DoraData|
-                         -> Result<(), String> {
-                            let retries = 20;
-                            for attempt in 1..=retries {
-                                match bridge.send(output, data.clone()) {
-                                    Ok(_) => {
-                                        log::info!("Sent audio data on attempt {}", attempt);
-                                        return Ok(());
-                                    }
-                                    Err(e) => {
-                                        if attempt == retries {
-                                            return Err(e.to_string());
-                                        }
-                                        std::thread::sleep(Duration::from_millis(150));
-                                    }
-                                }
-                            }
-                            Err("retry exhausted".into())
-                        };
-
                         if let Some(ref disp) = dispatcher {
                             if let Some(bridge) = disp.get_bridge("mofa-audio-input") {
                                 log::info!(
