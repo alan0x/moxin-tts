@@ -37,7 +37,6 @@ live_design! {
     use link::widgets::*;
 
     use mofa_widgets::theme::DARK_BG;
-    use mofa_ui::MofaTheme;
 
     // Import TTS screen
     use mofa_tts::screen::TTSScreen;
@@ -75,14 +74,23 @@ pub struct App {
 
 impl LiveRegister for App {
     fn live_register(cx: &mut Cx) {
-        // Register theme and shared UI components
+        ::log::info!("LiveRegister::live_register called");
+
+        // Register Makepad core widgets (Window, View, etc.)
+        ::log::info!("Registering makepad_widgets");
+        makepad_widgets::live_design(cx);
+
+        // Register shared widgets and theme
+        ::log::info!("Registering mofa_widgets");
+        mofa_widgets::live_design(cx);
+        ::log::info!("Registering mofa_ui");
         mofa_ui::live_design(cx);
 
         // Register TTS app
+        ::log::info!("Registering MoFaTTSApp");
         MoFaTTSApp::live_design(cx);
 
-        // Register this app
-        crate::app::live_design(cx);
+        ::log::info!("LiveRegister::live_register completed");
     }
 }
 
@@ -136,6 +144,4 @@ impl App {
 // APP ENTRY POINT
 // ============================================================================
 
-pub fn app_main() {
-    app_main!(App);
-}
+app_main!(App);

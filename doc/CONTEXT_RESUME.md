@@ -3,8 +3,9 @@
 > 本文档用于快速恢复工作上下文，继续Moxin TTS独立应用开发
 
 **文档创建时间**: 2026-02-02
-**文档版本**: 1.0
-**当前阶段**: Phase 1 完成，准备进入 Phase 2
+**最后更新时间**: 2026-02-03
+**文档版本**: 2.0
+**当前阶段**: Phase 3 完成（Few-Shot训练功能），Moxin TTS 独立应用可正常运行
 
 ---
 
@@ -141,6 +142,79 @@ cargo build --package moxin-tts --release
 ./target/release/moxin-tts.exe  # Windows
 ./target/release/moxin-tts      # Unix
 ```
+
+### Phase 2: Moxin TTS Shell 修复 (100%完成)
+
+#### 2.1 Makepad初始化问题修复
+- ✅ 添加`makepad_widgets::live_design(cx)`到LiveRegister
+- ✅ 移除重复的`crate::app::live_design(cx)`调用
+- ✅ 修复app_main!宏位置（移到模块级别）
+- ✅ 移除live_design!中的MofaTheme导入
+
+#### 2.2 编译错误修复
+- ✅ 修复window标签显示问题
+- ✅ 解决shader解析错误
+- ✅ 确认dora-node-api版本（0.3.12）
+
+#### 2.3 运行验证
+- ✅ 应用成功启动
+- ✅ TTS屏幕正常显示
+- ✅ Dora dataflow正常连接
+
+### Phase 3: Few-Shot训练功能集成 (100%完成)
+
+#### 3.1 UI组件实现
+- ✅ 添加CloneMode枚举（Express/Pro模式）
+- ✅ 实现ModeTabButton组件
+- ✅ 添加mode_tabs UI（模式切换标签）
+- ✅ 重构body结构：
+  - express_mode_content（零样本克隆，3-10秒音频）
+  - pro_mode_content（Few-Shot训练，3-10分钟音频）
+- ✅ 更新footer为条件按钮组（express_actions/pro_actions）
+
+#### 3.2 训练管理实现
+- ✅ 创建`training_manager.rs`
+  - TrainingManager：异步训练编排
+  - TrainingProgress：进度状态结构
+  - TrainingStatus枚举
+- ✅ 创建`training_service.py`
+  - Python训练服务包装
+  - 进度日志输出
+  - 与GPT-SoVITS训练脚本集成
+
+#### 3.3 VoiceCloneModal扩展
+- ✅ 添加训练相关字段到struct
+- ✅ 实现LiveHook trait（初始化TrainingManager）
+- ✅ 添加事件处理器：
+  - 模式切换（express_tab/pro_tab）
+  - 长录音按钮（toggle_training_recording）
+  - 训练按钮（start_training/cancel_training）
+  - 进度轮询（poll_training_progress）
+
+#### 3.4 新增方法（11个）
+- ✅ `switch_to_mode()` - 切换Express/Pro模式
+- ✅ `toggle_training_recording()` - 切换长录音状态
+- ✅ `start_training_recording()` - 开始长录音（3-10分钟）
+- ✅ `stop_training_recording()` - 停止长录音并保存
+- ✅ `start_training()` - 启动训练流程
+- ✅ `cancel_training()` - 取消训练
+- ✅ `poll_training_progress()` - 轮询训练进度
+- ✅ `update_training_ui()` - 更新UI进度显示
+- ✅ `on_training_completed()` - 训练完成回调
+- ✅ `check_gpu_availability()` - GPU检测
+- ✅ `add_training_log()` - 添加训练日志
+
+#### 3.5 编译错误修复
+- ✅ LiveHook冲突（从derive移除，手动实现）
+- ✅ 方法签名修复（添加cx参数）
+- ✅ CloneMode所有权（添加Copy trait）
+- ✅ log命名冲突（使用::log::）
+- ✅ Shader颜色定义（替换为hex值）
+- ✅ border_radius shader错误（使用直接值）
+
+#### 3.6 文档创建
+- ✅ `FEW_SHOT_UI_IMPLEMENTATION_GUIDE.md` - 完整实施指南
+- ✅ `VOICE_CLONE_MODAL_MODIFICATIONS_SUMMARY.md` - 修改总结
 
 ---
 

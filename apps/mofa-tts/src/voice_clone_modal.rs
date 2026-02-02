@@ -1,17 +1,32 @@
 //! Voice Clone Modal - UI for creating custom voices via zero-shot cloning
 //!
 //! Supports two modes:
-//! 1. Select existing audio file + manually enter prompt text
-//! 2. Record voice via microphone + auto-transcribe with ASR
+//! 1. Express Mode (Zero-shot): Select existing audio file + manually enter prompt text OR record voice via microphone + auto-transcribe with ASR
+//! 2. Pro Mode (Few-shot Training): Record 3-10 minutes of audio and train custom GPT-SoVITS models
 
 use crate::audio_player::TTSPlayer;
-use crate::voice_data::{CloningStatus, Voice};
+use crate::training_manager::{TrainingManager, TrainingProgress, TrainingStatus};
+use crate::voice_data::{CloningStatus, Voice, VoiceCategory, VoiceSource};
 use crate::voice_persistence;
 use makepad_widgets::*;
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// Clone mode - Express (zero-shot) or Pro (few-shot training)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CloneMode {
+    Express,  // Zero-shot cloning (3-10 second audio)
+    Pro,      // Few-shot training (3-10 minute audio)
+}
+
+impl Default for CloneMode {
+    fn default() -> Self {
+        Self::Express
+    }
+}
 
 /// Recording state
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -496,6 +511,50 @@ live_design! {
         }
     }
 
+    // Mode tab button
+    ModeTabButton = <Button> {
+        width: Fit, height: 44
+        padding: {left: 24, right: 24}
+
+        draw_bg: {
+            instance dark_mode: 0.0
+            instance hover: 0.0
+            instance active: 0.0
+
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+
+                // Background
+                let base = mix((SLATE_50), (SLATE_700), self.dark_mode);
+                let active_bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                let bg = mix(base, active_bg, self.active);
+                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 0.0);
+                sdf.fill(bg);
+
+                // Bottom border (active indicator)
+                if self.active > 0.5 {
+                    let border_color = mix((PRIMARY_500), (PRIMARY_400), self.dark_mode);
+                    sdf.move_to(0., self.rect_size.y);
+                    sdf.line_to(self.rect_size.x, self.rect_size.y);
+                    sdf.stroke(border_color, 3.0);
+                }
+
+                return sdf.result;
+            }
+        }
+
+        draw_text: {
+            instance dark_mode: 0.0
+            instance active: 0.0
+            text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+            fn get_color(self) -> vec4 {
+                let inactive = mix((SLATE_600), (SLATE_400), self.dark_mode);
+                let active_color = mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                return mix(inactive, active_color, self.active);
+            }
+        }
+    }
+
     // Main modal dialog
     pub VoiceCloneModal = {{VoiceCloneModal}} {
         width: Fill, height: Fill
@@ -600,18 +659,52 @@ live_design! {
                     }
                 }
 
+                // Mode tabs
+                mode_tabs = <View> {
+                    width: Fill, height: Fit
+                    flow: Right
+                    spacing: 0
+
+                    show_bg: true
+                    draw_bg: {
+                        instance dark_mode: 0.0
+                        fn pixel(self) -> vec4 {
+                            return mix((SLATE_50), (SLATE_700), self.dark_mode);
+                        }
+                    }
+
+                    express_tab = <ModeTabButton> {
+                        text: "Express Mode"
+                        draw_bg: { active: 1.0 }
+                        draw_text: { active: 1.0 }
+                    }
+
+                    pro_tab = <ModeTabButton> {
+                        text: "Pro Mode (Training)"
+                        draw_bg: { active: 0.0 }
+                        draw_text: { active: 0.0 }
+                    }
+                }
+
                 // Body
                 body = <View> {
                     width: Fill, height: Fit
                     flow: Down
-                    padding: {left: 24, right: 24, top: 16, bottom: 16}
-                    spacing: 16
+                    spacing: 0
 
-                    // File selector
-                    file_selector = <FileSelector> {}
+                    // EXPRESS MODE CONTENT (existing zero-shot cloning)
+                    express_mode_content = <View> {
+                        width: Fill, height: Fit
+                        flow: Down
+                        padding: {left: 24, right: 24, top: 16, bottom: 16}
+                        spacing: 16
+                        visible: true
 
-                    // Reference text input with transcription loading overlay
-                    prompt_text_container = <View> {
+                        // File selector
+                        file_selector = <FileSelector> {}
+
+                        // Reference text input with transcription loading overlay
+                        prompt_text_container = <View> {
                         width: Fill, height: Fit
                         flow: Overlay
 
@@ -725,9 +818,277 @@ live_design! {
                     // Language selector
                     language_selector = <LanguageSelector> {}
 
-                    // Progress log
-                    progress_log = <ProgressLog> {}
-                }
+                        // Progress log
+                        progress_log = <ProgressLog> {}
+                    } // end express_mode_content
+
+                    // PRO MODE CONTENT (few-shot training)
+                    pro_mode_content = <View> {
+                        width: Fill, height: Fit
+                        flow: Down
+                        padding: {left: 24, right: 24, top: 16, bottom: 16}
+                        spacing: 16
+                        visible: false
+
+                        // Training recording section
+                        training_recording_section = <View> {
+                            width: Fill, height: Fit
+                            flow: Down
+                            spacing: 12
+
+                            label = <Label> {
+                                width: Fill, height: Fit
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_SEMIBOLD>{ font_size: 12.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                    }
+                                }
+                                text: "Training Audio Recording"
+                            }
+
+                            instruction = <Label> {
+                                width: Fill, height: Fit
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: { font_size: 11.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                                    }
+                                }
+                                text: "Record 3-10 minutes of continuous speech. Speak clearly with varied sentences for best results."
+                            }
+
+                            record_row = <View> {
+                                width: Fill, height: Fit
+                                flow: Right
+                                spacing: 12
+                                align: {y: 0.5}
+
+                                record_btn = <Button> {
+                                    width: 48, height: 48
+
+                                    draw_bg: {
+                                        instance dark_mode: 0.0
+                                        instance recording: 0.0
+                                        instance pulse: 0.0
+
+                                        fn pixel(self) -> vec4 {
+                                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                            sdf.circle(24.0, 24.0, 22.0);
+
+                                            if self.recording > 0.5 {
+                                                // Recording state: pulsing red
+                                                let pulse_intensity = 0.8 + 0.2 * sin(self.pulse * 6.28);
+                                                let color = mix((RED_500), (RED_600), pulse_intensity);
+                                                sdf.fill(color);
+
+                                                // Stop square icon
+                                                sdf.rect(18.0, 18.0, 12.0, 12.0);
+                                                sdf.fill((WHITE));
+                                            } else {
+                                                // Idle state: gray with red mic
+                                                let bg = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                                sdf.fill(bg);
+
+                                                // Microphone icon (simplified)
+                                                sdf.box(20.0, 14.0, 8.0, 12.0, 4.0);
+                                                sdf.fill((RED_500));
+                                            }
+
+                                            return sdf.result;
+                                        }
+                                    }
+
+                                    draw_text: {
+                                        text_style: { font_size: 0.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return vec4(0.0, 0.0, 0.0, 0.0);
+                                        }
+                                    }
+                                }
+
+                                recording_info = <View> {
+                                    width: Fill, height: Fit
+                                    flow: Down
+                                    spacing: 4
+
+                                    duration_label = <Label> {
+                                        width: Fill, height: Fit
+                                        draw_text: {
+                                            instance dark_mode: 0.0
+                                            text_style: <FONT_SEMIBOLD>{ font_size: 14.0 }
+                                            fn get_color(self) -> vec4 {
+                                                return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                            }
+                                        }
+                                        text: "Click to start recording"
+                                    }
+
+                                    progress_label = <Label> {
+                                        width: Fill, height: Fit
+                                        draw_text: {
+                                            instance dark_mode: 0.0
+                                            text_style: { font_size: 11.0 }
+                                            fn get_color(self) -> vec4 {
+                                                return mix((TEXT_TERTIARY), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                            }
+                                        }
+                                        text: "Target: 5-10 minutes"
+                                    }
+                                }
+                            }
+
+                            // Duration progress bar
+                            duration_bar = <View> {
+                                width: Fill, height: 6
+                                visible: false
+                                show_bg: true
+
+                                draw_bg: {
+                                    instance dark_mode: 0.0
+                                    instance progress: 0.0
+
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+
+                                        // Background bar
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 3.0);
+                                        let bg = mix((SLATE_200), (SLATE_600), self.dark_mode);
+                                        sdf.fill(bg);
+
+                                        // Progress bar
+                                        let progress_width = self.rect_size.x * self.progress;
+                                        sdf.box(0., 0., progress_width, self.rect_size.y, 3.0);
+
+                                        // Color gradient: green -> yellow -> red
+                                        let color = mix((GREEN_500), (YELLOW_500), smoothstep(0.3, 0.7, self.progress));
+                                        let color = mix(color, (RED_500), smoothstep(0.7, 1.0, self.progress));
+                                        sdf.fill(color);
+
+                                        return sdf.result;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Voice name + language (reuse from express mode)
+                        voice_name_input = <LabeledInput> {
+                            label = { text: "Voice Name" }
+                            input = { empty_text: "Enter a name for this trained voice..." }
+                        }
+
+                        language_selector = <LanguageSelector> {}
+
+                        // GPU warning
+                        gpu_warning = <View> {
+                            width: Fill, height: Fit
+                            padding: 12
+                            visible: false
+                            show_bg: true
+                            draw_bg: {
+                                instance dark_mode: 0.0
+                                fn pixel(self) -> vec4 {
+                                    let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                    sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 6.0);
+                                    // Warning colors: amber/orange for light/dark mode
+                                    let bg = mix(#fef3c7, #78350f, self.dark_mode);
+                                    sdf.fill(bg);
+                                    let border = mix(#fcd34d, #b45309, self.dark_mode);
+                                    sdf.stroke(border, 1.0);
+                                    return sdf.result;
+                                }
+                            }
+
+                            message = <Label> {
+                                width: Fill, height: Fit
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: { font_size: 11.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix(#78350f, #fef3c7, self.dark_mode);
+                                    }
+                                }
+                                text: "⚠️ No GPU detected. Training will be VERY slow (8-24 hours). Consider using a machine with CUDA GPU."
+                            }
+                        }
+
+                        // Training progress section
+                        training_progress_section = <View> {
+                            width: Fill, height: Fit
+                            flow: Down
+                            spacing: 12
+                            visible: false
+
+                            stage_label = <Label> {
+                                width: Fill, height: Fit
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                    }
+                                }
+                                text: "Training Status: Preparing..."
+                            }
+
+                            progress_bar = <View> {
+                                width: Fill, height: 8
+                                show_bg: true
+                                draw_bg: {
+                                    instance dark_mode: 0.0
+                                    instance progress: 0.0
+
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+
+                                        // Background
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
+                                        let bg = mix((SLATE_200), (SLATE_600), self.dark_mode);
+                                        sdf.fill(bg);
+
+                                        // Progress
+                                        let progress_width = self.rect_size.x * self.progress;
+                                        sdf.box(0., 0., progress_width, self.rect_size.y, 4.0);
+                                        sdf.fill((PRIMARY_500));
+
+                                        return sdf.result;
+                                    }
+                                }
+                            }
+
+                            log_scroll = <ScrollYView> {
+                                width: Fill, height: 200
+                                show_bg: true
+                                draw_bg: {
+                                    instance dark_mode: 0.0
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, 4.0);
+                                        let bg = mix((SLATE_50), (SLATE_800), self.dark_mode);
+                                        sdf.fill(bg);
+                                        sdf.stroke(mix((SLATE_200), (SLATE_600), self.dark_mode), 1.0);
+                                        return sdf.result;
+                                    }
+                                }
+
+                                log_content = <Label> {
+                                    width: Fill, height: Fit
+                                    padding: {left: 10, right: 10, top: 8, bottom: 8}
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: { font_size: 11.0, line_spacing: 1.5 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((SLATE_600), (SLATE_300), self.dark_mode);
+                                        }
+                                    }
+                                    text: ""
+                                }
+                            }
+                        }
+                    } // end pro_mode_content
+                } // end body
 
                 // Footer with action buttons
                 footer = <View> {
@@ -758,16 +1119,45 @@ live_design! {
                         text: ""
                     }
 
-                    cancel_btn = <ActionButton> {
-                        text: "Cancel"
-                        draw_bg: { primary: 0.0 }
-                        draw_text: { primary: 0.0 }
+                    // Express mode buttons
+                    express_actions = <View> {
+                        width: Fit, height: Fit
+                        flow: Right
+                        spacing: 12
+                        visible: true
+
+                        cancel_btn = <ActionButton> {
+                            text: "Cancel"
+                            draw_bg: { primary: 0.0 }
+                            draw_text: { primary: 0.0 }
+                        }
+
+                        save_btn = <ActionButton> {
+                            text: "Save Voice"
+                            draw_bg: { primary: 1.0 }
+                            draw_text: { primary: 1.0 }
+                        }
                     }
 
-                    save_btn = <ActionButton> {
-                        text: "Save Voice"
-                        draw_bg: { primary: 1.0 }
-                        draw_text: { primary: 1.0 }
+                    // Pro mode buttons
+                    pro_actions = <View> {
+                        width: Fit, height: Fit
+                        flow: Right
+                        spacing: 12
+                        visible: false
+
+                        cancel_training_btn = <ActionButton> {
+                            text: "Cancel Training"
+                            draw_bg: { primary: 0.0 }
+                            draw_text: { primary: 0.0 }
+                            visible: false
+                        }
+
+                        start_training_btn = <ActionButton> {
+                            text: "Start Training"
+                            draw_bg: { primary: 1.0 }
+                            draw_text: { primary: 1.0 }
+                        }
                     }
                 }
             } // end modal_content
@@ -896,7 +1286,7 @@ pub enum VoiceCloneModalAction {
     },
 }
 
-#[derive(Live, LiveHook, Widget)]
+#[derive(Live, Widget)]
 pub struct VoiceCloneModal {
     #[deref]
     view: View,
@@ -970,6 +1360,42 @@ pub struct VoiceCloneModal {
     // Transcription loading animation
     #[rust]
     transcription_animation_start_time: Option<std::time::Instant>,
+
+    // Pro mode training fields
+    #[rust]
+    clone_mode: CloneMode,
+
+    #[rust]
+    training_manager: Option<Arc<TrainingManager>>,
+
+    #[rust]
+    training_progress: TrainingProgress,
+
+    #[rust]
+    recording_for_training: bool,
+
+    #[rust]
+    training_audio_file: Option<PathBuf>,
+
+    #[rust]
+    training_audio_samples: Vec<f32>,
+
+    #[rust]
+    max_training_duration: f32,
+
+    #[rust]
+    training_recording_start: Option<Instant>,
+}
+
+impl LiveHook for VoiceCloneModal {
+    fn after_new_from_doc(&mut self, _cx: &mut Cx) {
+        // Initialize training manager
+        self.training_manager = Some(Arc::new(TrainingManager::new()));
+        self.clone_mode = CloneMode::Express;
+        self.training_progress = TrainingProgress::default();
+        self.max_training_duration = 600.0; // 10 minutes
+        self.recording_for_training = false;
+    }
 }
 
 impl Widget for VoiceCloneModal {
@@ -1333,15 +1759,75 @@ impl Widget for VoiceCloneModal {
             _ => {}
         }
 
-        // Handle save button
+        // Handle save button (Express mode)
         let save_btn = self.view.button(ids!(
-            modal_container.modal_wrapper.modal_content.footer.save_btn
+            modal_container.modal_wrapper.modal_content.footer.express_actions.save_btn
         ));
         match event.hits(cx, save_btn.area()) {
             Hit::FingerUp(fe) if fe.was_tap() => {
                 self.save_voice(cx, scope);
             }
             _ => {}
+        }
+
+        // Handle mode tab switching
+        let express_tab = self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.mode_tabs.express_tab
+        ));
+        match event.hits(cx, express_tab.area()) {
+            Hit::FingerUp(fe) if fe.was_tap() => {
+                self.switch_to_mode(cx, CloneMode::Express);
+            }
+            _ => {}
+        }
+
+        let pro_tab = self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.mode_tabs.pro_tab
+        ));
+        match event.hits(cx, pro_tab.area()) {
+            Hit::FingerUp(fe) if fe.was_tap() => {
+                self.switch_to_mode(cx, CloneMode::Pro);
+            }
+            _ => {}
+        }
+
+        // Pro mode: Training recording button
+        if self.clone_mode == CloneMode::Pro {
+            let record_btn = self.view.button(ids!(
+                modal_container.modal_wrapper.modal_content.body.pro_mode_content
+                .training_recording_section.record_row.record_btn
+            ));
+            match event.hits(cx, record_btn.area()) {
+                Hit::FingerUp(fe) if fe.was_tap() => {
+                    self.toggle_training_recording(cx);
+                }
+                _ => {}
+            }
+
+            // Start training button
+            let start_training_btn = self.view.button(ids!(
+                modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+            ));
+            match event.hits(cx, start_training_btn.area()) {
+                Hit::FingerUp(fe) if fe.was_tap() => {
+                    self.start_training(cx, scope);
+                }
+                _ => {}
+            }
+
+            // Cancel training button
+            let cancel_training_btn = self.view.button(ids!(
+                modal_container.modal_wrapper.modal_content.footer.pro_actions.cancel_training_btn
+            ));
+            match event.hits(cx, cancel_training_btn.area()) {
+                Hit::FingerUp(fe) if fe.was_tap() => {
+                    self.cancel_training(cx);
+                }
+                _ => {}
+            }
+
+            // Poll training progress (should be called on every frame)
+            self.poll_training_progress(cx);
         }
 
         // Extract actions - keep for any remaining action-based handling
@@ -2370,6 +2856,516 @@ impl VoiceCloneModal {
                     draw_bg: { recording: (recording_val) }
                 },
             );
+        self.view.redraw(cx);
+    }
+
+    // ========== Pro Mode Training Methods ==========
+
+    fn switch_to_mode(&mut self, cx: &mut Cx, mode: CloneMode) {
+        if self.clone_mode == mode {
+            return;
+        }
+
+        self.clone_mode = mode;
+
+        match mode {
+            CloneMode::Express => {
+                // Update tab visuals
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.mode_tabs.express_tab
+                )).apply_over(cx, live! {
+                    draw_bg: { active: 1.0 }
+                    draw_text: { active: 1.0 }
+                });
+
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.mode_tabs.pro_tab
+                )).apply_over(cx, live! {
+                    draw_bg: { active: 0.0 }
+                    draw_text: { active: 0.0 }
+                });
+
+                // Show/hide content
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.body.express_mode_content))
+                    .set_visible(cx, true);
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.body.pro_mode_content))
+                    .set_visible(cx, false);
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.footer.express_actions))
+                    .set_visible(cx, true);
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.footer.pro_actions))
+                    .set_visible(cx, false);
+            }
+
+            CloneMode::Pro => {
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.mode_tabs.express_tab
+                )).apply_over(cx, live! {
+                    draw_bg: { active: 0.0 }
+                    draw_text: { active: 0.0 }
+                });
+
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.mode_tabs.pro_tab
+                )).apply_over(cx, live! {
+                    draw_bg: { active: 1.0 }
+                    draw_text: { active: 1.0 }
+                });
+
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.body.express_mode_content))
+                    .set_visible(cx, false);
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.body.pro_mode_content))
+                    .set_visible(cx, true);
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.footer.express_actions))
+                    .set_visible(cx, false);
+                self.view.view(ids!(modal_container.modal_wrapper.modal_content.footer.pro_actions))
+                    .set_visible(cx, true);
+
+                // Check GPU availability
+                self.check_gpu_availability(cx);
+            }
+        }
+
+        self.view.redraw(cx);
+    }
+
+    fn toggle_training_recording(&mut self, cx: &mut Cx) {
+        if self.recording_for_training {
+            self.stop_training_recording(cx);
+        } else {
+            self.start_training_recording(cx);
+        }
+    }
+
+    fn start_training_recording(&mut self, cx: &mut Cx) {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+        self.add_training_log(cx, "[INFO] Starting long recording (target: 5-10 minutes)");
+        self.add_training_log(cx, "[INFO] Speak clearly with varied sentences for best training results");
+
+        self.recording_for_training = true;
+        self.training_audio_samples.clear();
+        self.training_recording_start = Some(Instant::now());
+
+        // Update UI
+        self.view.label(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_recording_section.record_row.recording_info.duration_label
+        )).set_text(cx, "Recording... 0:00 / 10:00");
+
+        self.view.view(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_recording_section.duration_bar
+        )).set_visible(cx, true);
+
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_recording_section.record_row.record_btn
+        )).apply_over(cx, live! { draw_bg: { recording: 1.0 } });
+
+        // Start CPAL recording (reuse existing audio capture logic from Express mode)
+        // Initialize buffer and atomic flags
+        self.recording_buffer = Arc::new(Mutex::new(Vec::new()));
+        self.is_recording = Arc::new(AtomicBool::new(true));
+        self.recording_sample_rate = Arc::new(Mutex::new(48000));
+
+        let buffer = Arc::clone(&self.recording_buffer);
+        let is_recording = Arc::clone(&self.is_recording);
+        let sample_rate_store = Arc::clone(&self.recording_sample_rate);
+
+        std::thread::spawn(move || {
+            let host = cpal::default_host();
+            let device = match host.default_input_device() {
+                Some(d) => d,
+                None => {
+                    eprintln!("[TrainingRec] No input device found");
+                    return;
+                }
+            };
+
+            let supported_config = match device.default_input_config() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[TrainingRec] Failed to get config: {}", e);
+                    return;
+                }
+            };
+
+            let sample_rate = supported_config.sample_rate().0;
+            let channels = supported_config.channels() as usize;
+            *sample_rate_store.lock() = sample_rate;
+
+            let config: cpal::StreamConfig = supported_config.into();
+            let buffer_clone = Arc::clone(&buffer);
+            let is_recording_clone = Arc::clone(&is_recording);
+
+            let stream = match device.build_input_stream(
+                &config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    if is_recording_clone.load(Ordering::Relaxed) {
+                        // Convert to mono
+                        if channels > 1 {
+                            let mono: Vec<f32> = data
+                                .chunks(channels)
+                                .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+                                .collect();
+                            buffer_clone.lock().extend_from_slice(&mono);
+                        } else {
+                            buffer_clone.lock().extend_from_slice(data);
+                        }
+                    }
+                },
+                |err| eprintln!("[TrainingRec] Error: {}", err),
+                None,
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[TrainingRec] Failed to build stream: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = stream.play() {
+                eprintln!("[TrainingRec] Failed to start: {}", e);
+                return;
+            }
+
+            eprintln!("[TrainingRec] Recording started ({}Hz, {} channels)", sample_rate, channels);
+
+            // Keep alive (max 12 minutes)
+            let max_duration = std::time::Duration::from_secs(12 * 60);
+            let start = std::time::Instant::now();
+
+            while is_recording.load(Ordering::Relaxed) && start.elapsed() < max_duration {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            is_recording.store(false, Ordering::Relaxed);
+            eprintln!("[TrainingRec] Recording stopped");
+        });
+
+        self.view.redraw(cx);
+    }
+
+    fn stop_training_recording(&mut self, cx: &mut Cx) {
+        self.is_recording.store(false, Ordering::Relaxed);
+        self.recording_for_training = false;
+
+        // Calculate duration
+        let duration = self.training_recording_start
+            .map(|t| t.elapsed().as_secs_f32())
+            .unwrap_or(0.0);
+
+        self.add_training_log(cx, &format!("[INFO] Recording stopped ({:.1}s)", duration));
+
+        // Validate duration (must be 3-10 minutes = 180-600 seconds)
+        if duration < 180.0 {
+            self.add_training_log(cx, &format!(
+                "[ERROR] Recording too short: {:.1}s (minimum: 180s = 3 minutes)",
+                duration
+            ));
+            self.training_audio_file = None;
+            return;
+        }
+
+        if duration > 600.0 {
+            self.add_training_log(cx, &format!(
+                "[WARNING] Recording too long: {:.1}s (will be trimmed to 600s = 10 minutes)",
+                duration
+            ));
+        }
+
+        // Get recorded samples
+        let samples: Vec<f32> = {
+            let buffer = self.recording_buffer.lock();
+            buffer.clone()
+        };
+
+        let source_sample_rate = *self.recording_sample_rate.lock();
+
+        // Resample to 32kHz (required by GPT-SoVITS)
+        let target_sample_rate = 32000;
+        let resampled = if source_sample_rate != target_sample_rate {
+            Self::resample(&samples, source_sample_rate, target_sample_rate)
+        } else {
+            samples
+        };
+
+        // Store samples
+        self.training_audio_samples = resampled;
+
+        // Save to temp file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!(
+            "training_audio_{}.wav",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+
+        match Self::save_wav_static(&temp_file, &self.training_audio_samples, target_sample_rate) {
+            Ok(_) => {
+                self.training_audio_file = Some(temp_file.clone());
+                self.add_training_log(cx, &format!(
+                    "[SUCCESS] Recording saved ({:.1}s, {:.1} MB)",
+                    duration,
+                    (self.training_audio_samples.len() * 4) as f64 / 1_000_000.0
+                ));
+
+                // Enable start training button
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+                )).set_enabled(cx, true);
+            }
+            Err(e) => {
+                self.add_training_log(cx, &format!("[ERROR] Failed to save audio: {}", e));
+            }
+        }
+
+        // Update UI
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_recording_section.record_row.record_btn
+        )).apply_over(cx, live! { draw_bg: { recording: 0.0 } });
+
+        self.view.redraw(cx);
+    }
+
+    fn start_training(&mut self, cx: &mut Cx, scope: &mut Scope) {
+        // Validate inputs
+        let voice_name = self.view.text_input(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content.voice_name_input.input
+        )).text();
+
+        if voice_name.is_empty() {
+            self.add_training_log(cx, "[ERROR] Voice name is required");
+            return;
+        }
+
+        let Some(audio_file) = &self.training_audio_file else {
+            self.add_training_log(cx, "[ERROR] No training audio recorded");
+            return;
+        };
+
+        let language = self.selected_language.clone();
+        let voice_id = voice_persistence::generate_voice_id(&voice_name);
+
+        // Show progress section
+        self.view.view(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content.training_progress_section
+        )).set_visible(cx, true);
+
+        // Show cancel button, hide start button
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.footer.pro_actions.cancel_training_btn
+        )).set_visible(cx, true);
+
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+        )).set_visible(cx, false);
+
+        // Start training via manager
+        let manager = self.training_manager.as_ref().unwrap();
+        if !manager.start_training(voice_id, voice_name, audio_file.clone(), language) {
+            self.add_training_log(cx, "[ERROR] Failed to start training");
+            return;
+        }
+
+        self.add_training_log(cx, "[INFO] Training started...");
+        self.add_training_log(cx, "[INFO] This will take 30-120 minutes. Do not close the application.");
+
+        self.view.redraw(cx);
+    }
+
+    fn cancel_training(&mut self, cx: &mut Cx) {
+        if let Some(ref manager) = self.training_manager {
+            manager.cancel_training();
+            self.add_training_log(cx, "[INFO] Cancelling training (may take a few seconds)...");
+        }
+    }
+
+    fn poll_training_progress(&mut self, cx: &mut Cx) {
+        let Some(ref manager) = self.training_manager else {
+            return;
+        };
+
+        let progress = manager.get_progress();
+
+        // Only update if changed
+        if progress.last_updated > self.training_progress.last_updated {
+            self.training_progress = progress.clone();
+            self.update_training_ui(cx, &progress);
+        }
+    }
+
+    fn update_training_ui(&mut self, cx: &mut Cx, progress: &TrainingProgress) {
+        // Update stage label
+        self.view.label(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_progress_section.stage_label
+        )).set_text(cx, &format!(
+            "Step {} of {}: {}",
+            progress.current_step, progress.total_steps, progress.current_stage
+        ));
+
+        // Update progress bar
+        let progress_pct = if progress.total_steps > 0 {
+            progress.current_step as f32 / progress.total_steps as f32
+        } else {
+            0.0
+        };
+
+        self.view.view(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_progress_section.progress_bar
+        )).apply_over(cx, live! { draw_bg: { progress: (progress_pct) } });
+
+        // Update log content (show last 100 lines)
+        let log_text = progress.log_lines
+            .iter()
+            .rev()
+            .take(100)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.view.label(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_progress_section.log_scroll.log_content
+        )).set_text(cx, &log_text);
+
+        // Handle training completion/failure/cancel
+        match &progress.status {
+            TrainingStatus::Completed {
+                gpt_weights,
+                sovits_weights,
+                reference_audio,
+                reference_text,
+            } => {
+                self.on_training_completed(
+                    cx,
+                    gpt_weights.clone(),
+                    sovits_weights.clone(),
+                    reference_audio.clone(),
+                    reference_text.clone(),
+                );
+            }
+            TrainingStatus::Failed { error } => {
+                self.add_training_log(cx, &format!("[ERROR] Training failed: {}", error));
+                // Re-enable start button
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+                )).set_visible(cx, true);
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.footer.pro_actions.cancel_training_btn
+                )).set_visible(cx, false);
+            }
+            TrainingStatus::Cancelled => {
+                self.add_training_log(cx, "[INFO] Training cancelled");
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+                )).set_visible(cx, true);
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.footer.pro_actions.cancel_training_btn
+                )).set_visible(cx, false);
+            }
+            _ => {}
+        }
+
+        self.view.redraw(cx);
+    }
+
+    fn on_training_completed(
+        &mut self,
+        cx: &mut Cx,
+        gpt_weights: PathBuf,
+        sovits_weights: PathBuf,
+        reference_audio: PathBuf,
+        reference_text: String,
+    ) {
+        let voice_name = self.view.text_input(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content.voice_name_input.input
+        )).text();
+
+        let voice_id = voice_persistence::generate_voice_id(&voice_name);
+
+        // Create new trained voice entry
+        let new_voice = Voice {
+            id: voice_id.clone(),
+            name: voice_name.clone(),
+            description: format!("Custom trained voice (Few-Shot)"),
+            category: VoiceCategory::Character,
+            language: self.selected_language.clone(),
+            source: VoiceSource::Trained,
+            reference_audio_path: Some(reference_audio.to_string_lossy().to_string()),
+            prompt_text: Some(reference_text),
+            gpt_weights: Some(gpt_weights.to_string_lossy().to_string()),
+            sovits_weights: Some(sovits_weights.to_string_lossy().to_string()),
+            created_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            ),
+            preview_audio: Some(reference_audio.to_string_lossy().to_string()),
+        };
+
+        // Save to custom voices config
+        if let Err(e) = voice_persistence::add_custom_voice(new_voice.clone()) {
+            self.add_training_log(cx, &format!("[ERROR] Failed to save voice: {}", e));
+            return;
+        }
+
+        self.add_training_log(cx, "[SUCCESS] Voice saved successfully!");
+
+        // Show success message
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+        )).set_visible(cx, true);
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.footer.pro_actions.cancel_training_btn
+        )).set_visible(cx, false);
+    }
+
+    fn check_gpu_availability(&mut self, cx: &mut Cx) {
+        // Check if CUDA is available
+        let has_gpu = std::process::Command::new("python")
+            .arg("-c")
+            .arg("import torch; print(torch.cuda.is_available())")
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "True")
+            .unwrap_or(false);
+
+        if !has_gpu {
+            // Show warning
+            self.view.view(ids!(
+                modal_container.modal_wrapper.modal_content.body.pro_mode_content.gpu_warning
+            )).set_visible(cx, true);
+        } else {
+            self.view.view(ids!(
+                modal_container.modal_wrapper.modal_content.body.pro_mode_content.gpu_warning
+            )).set_visible(cx, false);
+        }
+    }
+
+    fn add_training_log(&mut self, cx: &mut Cx, message: &str) {
+        self.training_progress.log_lines.push(message.to_string());
+
+        let log_text = self.training_progress.log_lines
+            .iter()
+            .rev()
+            .take(100)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.view.label(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_progress_section.log_scroll.log_content
+        )).set_text(cx, &log_text);
+
         self.view.redraw(cx);
     }
 }

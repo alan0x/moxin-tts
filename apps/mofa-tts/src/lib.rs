@@ -4,6 +4,7 @@
 pub mod audio_player; // Keep local: simplified TTS-specific version
 pub mod dora_integration;
 pub mod screen;
+pub mod training_manager;
 pub mod voice_clone_modal;
 pub mod voice_data;
 pub mod voice_persistence;

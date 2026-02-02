@@ -2,12 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Voice source - distinguishes between built-in and custom voices
+/// Voice source - distinguishes between built-in, zero-shot custom, and few-shot trained voices
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum VoiceSource {
     #[default]
     Builtin,
+    /// Zero-shot voice cloning (uses reference audio only)
     Custom,
+    /// Few-shot trained model (requires 3-10 min training)
+    Trained,
 }
 
 /// Voice information
@@ -348,5 +351,15 @@ impl Voice {
     /// Check if this is a custom voice
     pub fn is_custom(&self) -> bool {
         self.source == VoiceSource::Custom
+    }
+
+     /// Check if this is a trained voice (few-shot)
+    pub fn is_trained(&self) -> bool {
+        self.source == VoiceSource::Trained
+    }
+
+    /// Check if this voice uses custom models (either zero-shot or trained)
+    pub fn has_custom_models(&self) -> bool {
+        self.gpt_weights.is_some() || self.sovits_weights.is_some()
     }
 }
