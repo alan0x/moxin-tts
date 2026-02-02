@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "mofa-studio-shell",
+    "moxin-tts-shell",
     "mofa-widgets",
     "mofa-dora-bridge",
     "mofa-ui",
