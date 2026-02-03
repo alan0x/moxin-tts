@@ -3,6 +3,10 @@ name = "mofa-tts"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+moyoyo-ui = []  # Enable MoYoYo.tts style sidebar layout
+
 [dependencies]
 makepad-widgets.workspace = true
 mofa-widgets = { path = "../../mofa-widgets" }

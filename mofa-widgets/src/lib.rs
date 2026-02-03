@@ -76,6 +76,7 @@
 
 pub mod app_trait;
 pub mod audio_player;
+pub mod card;
 pub mod led_gauge;
 pub mod log_panel;
 pub mod participant_panel;
@@ -116,6 +117,7 @@ pub fn live_design(cx: &mut Cx) {
     theme::live_design(cx);
 
     // Register widgets in dependency order
+    card::live_design(cx);
     waveform_view::live_design(cx);
     participant_panel::live_design(cx);
     log_panel::live_design(cx);

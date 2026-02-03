@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+moyoyo-ui = ["mofa-tts/moyoyo-ui"]
+
 [dependencies]
 makepad-widgets.workspace = true
 mofa-widgets = { path = "../mofa-widgets" }

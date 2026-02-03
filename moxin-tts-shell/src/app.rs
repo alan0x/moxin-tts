@@ -52,9 +52,14 @@ live_design! {
                 inner_size: vec2(1200, 800)
             }
             pass: { clear_color: (DARK_BG) }
-
-            // Direct TTS screen (no wrapper, no sidebar)
-            tts_screen = <TTSScreen> {}
+            
+            body = <View> {
+                width: Fill, height: Fill
+                flow: Down
+                
+                // Direct TTS screen (no wrapper, no sidebar)
+                tts_screen = <TTSScreen> {}
+            }
         }
     }
 }

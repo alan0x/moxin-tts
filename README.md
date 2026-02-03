@@ -101,7 +101,25 @@ python download_models.py --list-voices
 # Download specific voice
 python download_models.py --voice "Luo Xiang"
 ```
+#### 3. Running the Application
 
+**Default Layout (Original MoFA style):**
+```bash
+cargo run -p moxin-tts
+```
+
+**MoYoYo.tts Style Layout (Modern sidebar design):**
+```bash
+cargo run -p moxin-tts --features moyoyo-ui
+```
+
+The application provides two distinct UI layouts:
+- **Default**: Original MoFA-style layout with system monitor and log panel
+- **MoYoYo UI**: Modern sidebar layout inspired by MoYoYo.tts, featuring a cleaner interface with a left navigation sidebar and simplified main content area
+
+You can switch between layouts by using the `--features moyoyo-ui` flag when running the application.
+
+For more details on the MoYoYo.tts UI implementation, see [doc/MOYOYO_UI_IMPLEMENTATION.md](doc/MOYOYO_UI_IMPLEMENTATION.md).
 Models are stored in:
 
 | Location | Contents |

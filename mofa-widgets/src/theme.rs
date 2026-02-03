@@ -136,6 +136,36 @@ live_design! {
     pub SURFACE = #ffffff           // Surface background (white)
     pub SURFACE_HOVER = #f8fafc     // Surface hover (slate-50)
 
+    // --- MoYoYo.tts Theme Colors (Light Mode) ---
+    // Based on the MoYoYo.tts Electron app design
+    pub MOYOYO_BG_PRIMARY = #ffffff         // Main background (white)
+    pub MOYOYO_BG_SECONDARY = #f5f7fa       // Card/panel background (light gray-blue)
+    pub MOYOYO_BG_SIDEBAR = #1a1a2f         // Sidebar dark background (adjusted from #1a1a2e)
+    pub MOYOYO_TEXT_PRIMARY = #303133       // Main text (dark gray)
+    pub MOYOYO_TEXT_SECONDARY = #606266     // Secondary text (medium gray)
+    pub MOYOYO_TEXT_MUTED = #909399         // Muted text (light gray)
+    pub MOYOYO_PRIMARY = #6366f1            // Primary brand color (indigo) - same as INDIGO_500
+    pub MOYOYO_PRIMARY_LIGHT = #818cf8      // Light primary (indigo-400)
+    pub MOYOYO_PRIMARY_DARK = #4f47e5       // Dark primary (indigo-600, adjusted)
+    pub MOYOYO_SUCCESS = #10b981            // Success green - same as EMERALD_500
+    pub MOYOYO_WARNING = #f59f0b            // Warning orange (adjusted)
+    pub MOYOYO_DANGER = #ef4444             // Danger red - same as RED_500
+    pub MOYOYO_INFO = #3b82f6               // Info blue - same as BLUE_500
+    pub MOYOYO_BORDER = #dcdff6             // Border color (adjusted from #dcdfe6)
+    pub MOYOYO_BORDER_LIGHT = #e4e7fd       // Light border (adjusted from #e4e7ed)
+    pub MOYOYO_SHADOW = #00000019           // Shadow color (rgba(0,0,0,0.1))
+
+    // --- MoYoYo.tts Theme Colors (Dark Mode) ---
+    pub MOYOYO_BG_PRIMARY_DARK = #1a1a1a    // Main background (very dark)
+    pub MOYOYO_BG_SECONDARY_DARK = #252525  // Card/panel background (dark)
+    pub MOYOYO_BG_SIDEBAR_DARK = #0f0f1a    // Sidebar darker background
+    pub MOYOYO_TEXT_PRIMARY_DARK = #e5faf3  // Main text (adjusted from #e5eaf3)
+    pub MOYOYO_TEXT_SECONDARY_DARK = #a3a6fd // Secondary text (adjusted from #a3a6ad)
+    pub MOYOYO_TEXT_MUTED_DARK = #73767a    // Muted text (gray)
+    pub MOYOYO_BORDER_DARK = #4c4d4f        // Border color (dark gray)
+    pub MOYOYO_BORDER_LIGHT_DARK = #3a3a3c  // Light border (darker)
+    pub MOYOYO_SHADOW_DARK = #0000004d      // Shadow color (rgba(0,0,0,0.3))
+
     // --- Primary Color Palette (based on Blue) ---
     pub PRIMARY_50 = #eff6ff
     pub PRIMARY_100 = #dbebfe       // Adjusted from #dbeafe

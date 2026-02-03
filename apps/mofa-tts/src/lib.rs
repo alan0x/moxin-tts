@@ -3,7 +3,15 @@
 // Local modules
 pub mod audio_player; // Keep local: simplified TTS-specific version
 pub mod dora_integration;
+
+// Screen modules - conditionally compiled based on features
+#[cfg(not(feature = "moyoyo-ui"))]
 pub mod screen;
+
+#[cfg(feature = "moyoyo-ui")]
+#[path = "screen_moyoyo.rs"]
+pub mod screen;
+
 pub mod training_manager;
 pub mod voice_clone_modal;
 pub mod voice_data;

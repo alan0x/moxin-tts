@@ -4,8 +4,40 @@
 
 **文档创建时间**: 2026-02-02
 **最后更新时间**: 2026-02-03
-**文档版本**: 3.0
-**当前阶段**: Phase 4 完成（代码库清理），Moxin TTS 独立应用代码库已精简
+**文档版本**: 4.0
+**当前阶段**: MoYoYo.tts 风格 UI 实现完成
+
+---
+
+## 📋 最新更新 (2026-02-03)
+
+### MoYoYo.tts 风格 UI 实现
+
+实现了双 UI 布局系统，可通过 Cargo feature flags 切换：
+
+**新增文件：**
+- `apps/mofa-tts/src/screen_moyoyo.rs` - MoYoYo.tts 风格布局（sidebar + 简洁主体）
+
+**修改文件：**
+- `apps/mofa-tts/src/lib.rs` - 添加条件编译支持
+- `apps/mofa-tts/Cargo.toml` - 添加 `moyoyo-ui` feature
+- `moxin-tts-shell/Cargo.toml` - Feature 透传配置
+
+**运行命令：**
+```bash
+# 旧布局（MoFA 风格）
+cargo run -p moxin-tts
+
+# 新布局（MoYoYo.tts 风格）
+cargo run -p moxin-tts --features moyoyo-ui
+```
+
+**设计特点：**
+- 左侧深色 sidebar（220px）包含 Logo、导航菜单、用户信息
+- 主体区域：浅灰背景 + 白色卡片设计
+- 移除了 MofaHero 状态栏和右侧日志面板
+- 使用 MoYoYo.tts 主题色（MOYOYO_PRIMARY: #6366f1）
+- 保持所有 widget path 兼容性，事件处理无需修改
 
 ---
 
