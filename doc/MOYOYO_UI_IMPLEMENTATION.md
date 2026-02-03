@@ -22,6 +22,7 @@
 ### MoYoYo.tts 风格布局
 
 #### 视觉特性
+
 - **左侧 Sidebar** (220px)
   - 深色背景 (`MOYOYO_BG_SIDEBAR`: #1a1a2e)
   - Logo 区域（顶部）
@@ -80,6 +81,7 @@ moxin-tts-shell/
 ### 条件编译配置
 
 **apps/mofa-tts/Cargo.toml:**
+
 ```toml
 [features]
 default = []
@@ -87,6 +89,7 @@ moyoyo-ui = []
 ```
 
 **moxin-tts-shell/Cargo.toml:**
+
 ```toml
 [features]
 default = []
@@ -94,6 +97,7 @@ moyoyo-ui = ["mofa-tts/moyoyo-ui"]
 ```
 
 **apps/mofa-tts/src/lib.rs:**
+
 ```rust
 // Screen modules - conditionally compiled based on features
 #[cfg(not(feature = "moyoyo-ui"))]
@@ -129,11 +133,13 @@ content_wrapper
 ### 运行不同布局
 
 **默认布局（MoFA 风格）:**
+
 ```bash
 cargo run -p moxin-tts
 ```
 
 **MoYoYo 布局:**
+
 ```bash
 cargo run -p moxin-tts --features moyoyo-ui
 ```
@@ -209,6 +215,7 @@ hero = <MofaHero> {
 ```
 
 原因：
+
 - 保持 widget 树结构完整
 - 避免破坏现有引用
 - 未来可能需要重新启用
@@ -224,14 +231,14 @@ sidebar = <View> {
     width: 220, height: Fill
     flow: Down
     spacing: 0
-    
+
     show_bg: true
     draw_bg: {
         fn pixel(self) -> vec4 {
             return (MOYOYO_BG_SIDEBAR);
         }
     }
-    
+
     sidebar_header = <View> { /* Logo */ }
     sidebar_nav = <View> { /* Navigation */ }
     sidebar_footer = <View> { /* User Info */ }
@@ -279,16 +286,19 @@ input_section = <RoundedView> {
 ## 🔮 未来改进
 
 ### 短期
+
 - [ ] 添加主题切换功能（浅色/深色）
 - [ ] 优化 Sidebar 动画效果
 - [ ] 完善用户信息显示
 
 ### 中期
+
 - [ ] 实现 Sidebar 可折叠功能
 - [ ] 添加更多导航项（音色库、音色克隆等）
 - [ ] 优化卡片阴影效果
 
 ### 长期
+
 - [ ] 支持自定义主题色
 - [ ] 实现布局切换动画
 - [ ] 响应式布局适配

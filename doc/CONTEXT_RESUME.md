@@ -16,14 +16,17 @@
 实现了双 UI 布局系统，可通过 Cargo feature flags 切换：
 
 **新增文件：**
+
 - `apps/mofa-tts/src/screen_moyoyo.rs` - MoYoYo.tts 风格布局（sidebar + 简洁主体）
 
 **修改文件：**
+
 - `apps/mofa-tts/src/lib.rs` - 添加条件编译支持
 - `apps/mofa-tts/Cargo.toml` - 添加 `moyoyo-ui` feature
 - `moxin-tts-shell/Cargo.toml` - Feature 透传配置
 
 **运行命令：**
+
 ```bash
 # 旧布局（MoFA 风格）
 cargo run -p moxin-tts
@@ -33,6 +36,7 @@ cargo run -p moxin-tts --features moyoyo-ui
 ```
 
 **设计特点：**
+
 - 左侧深色 sidebar（220px）包含 Logo、导航菜单、用户信息
 - 主体区域：浅灰背景 + 白色卡片设计
 - 移除了 MofaHero 状态栏和右侧日志面板
@@ -64,6 +68,7 @@ cargo run -p moxin-tts --features moyoyo-ui
 ### 核心目标
 
 从mofa-studio多应用平台中提取mofa-tts，创建一个**独立的桌面应用**：
+
 - ✅ 只包含TTS功能（文本转语音、语音克隆）
 - ✅ 移除应用切换、sidebar、通用设置等
 - ✅ 直接启动到TTS界面
@@ -126,15 +131,15 @@ C:\Users\FPG_123\Documents\projects\moxin\mofa-studio\
 
 ### 关键文件位置
 
-| 文件 | 路径 | 说明 |
-|------|------|------|
-| **应用入口** | `moxin-tts-shell/src/main.rs` | CLI参数解析和启动 |
-| **应用逻辑** | `moxin-tts-shell/src/app.rs` | 主应用结构 |
-| **TTS屏幕** | `apps/mofa-tts/src/screen.rs` | TTS界面实现 |
-| **包配置** | `moxin-tts-shell/Cargo.toml` | 依赖和构建配置 |
-| **构建指南** | `moxin-tts-shell/BUILDING.md` | 详细构建说明 |
-| **实施总结** | `moxin-tts-shell/IMPLEMENTATION_SUMMARY.md` | Phase 1完成情况 |
-| **二进制** | `target/release/moxin-tts.exe` | 编译输出 |
+| 文件         | 路径                                        | 说明              |
+| ------------ | ------------------------------------------- | ----------------- |
+| **应用入口** | `moxin-tts-shell/src/main.rs`               | CLI参数解析和启动 |
+| **应用逻辑** | `moxin-tts-shell/src/app.rs`                | 主应用结构        |
+| **TTS屏幕**  | `apps/mofa-tts/src/screen.rs`               | TTS界面实现       |
+| **包配置**   | `moxin-tts-shell/Cargo.toml`                | 依赖和构建配置    |
+| **构建指南** | `moxin-tts-shell/BUILDING.md`               | 详细构建说明      |
+| **实施总结** | `moxin-tts-shell/IMPLEMENTATION_SUMMARY.md` | Phase 1完成情况   |
+| **二进制**   | `target/release/moxin-tts.exe`              | 编译输出          |
 
 ---
 
@@ -143,21 +148,25 @@ C:\Users\FPG_123\Documents\projects\moxin\mofa-studio\
 ### Phase 1: 基础搭建 (100%完成)
 
 #### 1.1 创建独立Shell
+
 - ✅ 创建`moxin-tts-shell/`目录结构
 - ✅ 编写`main.rs` (CLI入口，47行)
 - ✅ 编写`app.rs` (应用逻辑，147行)
 - ✅ 配置`Cargo.toml` (44行)
 
 #### 1.2 工作区集成
+
 - ✅ 更新根目录`Cargo.toml`，添加`moxin-tts-shell`到members
 - ✅ 配置正确的依赖关系
 
 #### 1.3 编译验证
+
 - ✅ Debug编译成功
 - ✅ Release编译成功（34.81秒）
 - ✅ 无严重错误，只有2个警告（dead_code）
 
 #### 1.4 文档创建
+
 - ✅ `README.md` - 项目介绍
 - ✅ `BUILDING.md` - 构建指南
 - ✅ `IMPLEMENTATION_SUMMARY.md` - 实施总结
@@ -179,17 +188,20 @@ cargo build --package moxin-tts --release
 ### Phase 2: Moxin TTS Shell 修复 (100%完成)
 
 #### 2.1 Makepad初始化问题修复
+
 - ✅ 添加`makepad_widgets::live_design(cx)`到LiveRegister
 - ✅ 移除重复的`crate::app::live_design(cx)`调用
 - ✅ 修复app_main!宏位置（移到模块级别）
 - ✅ 移除live_design!中的MofaTheme导入
 
 #### 2.2 编译错误修复
+
 - ✅ 修复window标签显示问题
 - ✅ 解决shader解析错误
 - ✅ 确认dora-node-api版本（0.3.12）
 
 #### 2.3 运行验证
+
 - ✅ 应用成功启动
 - ✅ TTS屏幕正常显示
 - ✅ Dora dataflow正常连接
@@ -197,6 +209,7 @@ cargo build --package moxin-tts --release
 ### Phase 3: Few-Shot训练功能集成 (100%完成)
 
 #### 3.1 UI组件实现
+
 - ✅ 添加CloneMode枚举（Express/Pro模式）
 - ✅ 实现ModeTabButton组件
 - ✅ 添加mode_tabs UI（模式切换标签）
@@ -206,6 +219,7 @@ cargo build --package moxin-tts --release
 - ✅ 更新footer为条件按钮组（express_actions/pro_actions）
 
 #### 3.2 训练管理实现
+
 - ✅ 创建`training_manager.rs`
   - TrainingManager：异步训练编排
   - TrainingProgress：进度状态结构
@@ -216,6 +230,7 @@ cargo build --package moxin-tts --release
   - 与GPT-SoVITS训练脚本集成
 
 #### 3.3 VoiceCloneModal扩展
+
 - ✅ 添加训练相关字段到struct
 - ✅ 实现LiveHook trait（初始化TrainingManager）
 - ✅ 添加事件处理器：
@@ -225,6 +240,7 @@ cargo build --package moxin-tts --release
   - 进度轮询（poll_training_progress）
 
 #### 3.4 新增方法（11个）
+
 - ✅ `switch_to_mode()` - 切换Express/Pro模式
 - ✅ `toggle_training_recording()` - 切换长录音状态
 - ✅ `start_training_recording()` - 开始长录音（3-10分钟）
@@ -238,6 +254,7 @@ cargo build --package moxin-tts --release
 - ✅ `add_training_log()` - 添加训练日志
 
 #### 3.5 编译错误修复
+
 - ✅ LiveHook冲突（从derive移除，手动实现）
 - ✅ 方法签名修复（添加cx参数）
 - ✅ CloneMode所有权（添加Copy trait）
@@ -246,12 +263,14 @@ cargo build --package moxin-tts --release
 - ✅ border_radius shader错误（使用直接值）
 
 #### 3.6 文档创建
+
 - ✅ `FEW_SHOT_UI_IMPLEMENTATION_GUIDE.md` - 完整实施指南
 - ✅ `VOICE_CLONE_MODAL_MODIFICATIONS_SUMMARY.md` - 修改总结
 
 ### Phase 4: 代码库清理 (100%完成)
 
 #### 4.1 移除未使用的应用
+
 - ✅ 删除 apps/mofa-debate（多方辩论应用）
 - ✅ 删除 apps/mofa-fm（文件管理器应用）
 - ✅ 删除 apps/mofa-settings（设置应用）
@@ -259,12 +278,14 @@ cargo build --package moxin-tts --release
 - ✅ 删除 mofa-studio-shell（原多应用入口）
 
 #### 4.2 精简 Workspace 配置
+
 - ✅ 更新 Cargo.toml workspace members
 - ✅ 移除 mofa-studio-shell 成员
-- ✅ 将 apps/* 改为明确的 apps/mofa-tts
+- ✅ 将 apps/\* 改为明确的 apps/mofa-tts
 - ✅ 保留核心 TTS 栈（5个组件）
 
 #### 4.3 清理效果
+
 - ✅ 删除 128 个文件，约 24K 行代码
 - ✅ 编译验证通过（cargo build -p moxin-tts）
 - ✅ 代码库更聚焦、简洁、独立
@@ -276,6 +297,7 @@ cargo build --package moxin-tts --release
 ### 决策1: 使用方案A（创建新Shell）而非方案B（Feature Flags）
 
 **原因**:
+
 - ✅ 代码独立性：完全独立，不依赖mofa-studio-shell
 - ✅ 代码简洁性：约200行 vs 复杂的条件编译
 - ✅ 未来扩展性：可独立演进
@@ -286,6 +308,7 @@ cargo build --package moxin-tts --release
 ### 决策2: Few-Shot语音克隆使用dora-primespeech
 
 **原因**:
+
 - ✅ dora-primespeech已包含完整的GPT-SoVITS训练工具链
 - ✅ 避免重复依赖（MoYoYo.tts核心与dora-primespeech相同）
 - ✅ 架构一致（都是Dora节点）
@@ -296,6 +319,7 @@ cargo build --package moxin-tts --release
 ### 决策3: 使用dora-asr而非dora-primespeech内置ASR
 
 **原因**:
+
 - ✅ dora-asr专为实时识别优化
 - ✅ dora-primespeech ASR是批处理工具（用于训练数据准备）
 - ✅ 两者互补，各司其职
@@ -341,14 +365,14 @@ Working tree clean ✅
 
 ### 功能状态
 
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| 编译 | ✅ 完成 | Release build成功 |
-| 代码库清理 | ✅ 完成 | 移除未使用组件，精简24K行代码 |
-| 运行 | ✅ 验证 | 应用可正常启动 |
-| TTS生成 | 🚧 待测试 | 核心功能 |
-| 语音选择 | 🚧 待测试 | 14+预置语音 |
-| 零样本克隆 | ✅ UI完成 | Express模式（5-10秒音频） |
+| 功能         | 状态      | 说明                                |
+| ------------ | --------- | ----------------------------------- |
+| 编译         | ✅ 完成   | Release build成功                   |
+| 代码库清理   | ✅ 完成   | 移除未使用组件，精简24K行代码       |
+| 运行         | ✅ 验证   | 应用可正常启动                      |
+| TTS生成      | 🚧 待测试 | 核心功能                            |
+| 语音选择     | 🚧 待测试 | 14+预置语音                         |
+| 零样本克隆   | ✅ UI完成 | Express模式（5-10秒音频）           |
 | Few-shot训练 | ✅ UI完成 | Pro模式（3-10分钟音频，待后端集成） |
 
 ---
@@ -358,12 +382,14 @@ Working tree clean ✅
 ### Phase 5: 功能测试和完善 (进行中)
 
 #### 5.1 TTS 核心功能测试
+
 ```bash
 cd "C:\Users\FPG_123\Documents\projects\moxin\mofa-studio"
 cargo run -p moxin-tts
 ```
 
 **测试清单**:
+
 - [ ] **语音选择**: 测试预置语音选择功能
 - [ ] **文本输入**: 验证文本输入和编辑
 - [ ] **TTS生成**: 测试音频生成功能
@@ -371,6 +397,7 @@ cargo run -p moxin-tts
 - [ ] **音频下载**: 测试音频文件导出
 
 #### 5.2 语音克隆功能测试
+
 - [ ] **Express模式**: 测试零样本克隆（5-10秒音频）
 - [ ] **音频录制**: 验证短音频录制功能
 - [ ] **音频上传**: 测试音频文件上传
@@ -378,6 +405,7 @@ cargo run -p moxin-tts
 - [ ] **Pro模式**: 测试Few-Shot训练UI（后端待集成）
 
 #### 5.3 性能和稳定性
+
 - [ ] 测试长时间运行稳定性
 - [ ] 验证内存使用情况
 - [ ] 检查Dora dataflow连接
@@ -386,6 +414,7 @@ cargo run -p moxin-tts
 ### Phase 6: 文档完善和发布准备
 
 #### 6.1 文档更新
+
 - [x] 更新根目录`README.md`
 - [x] 更新`CONTEXT_RESUME.md`
 - [ ] 创建用户使用指南
@@ -393,6 +422,7 @@ cargo run -p moxin-tts
 - [ ] 添加部署指南
 
 #### 6.2 发布准备
+
 - [ ] 添加应用图标
 - [ ] 优化启动性能
 - [ ] 完善错误提示
@@ -414,6 +444,7 @@ Python版本: 3.8+
 ### 依赖检查
 
 #### Rust依赖
+
 ```bash
 # 检查Rust版本
 rustc --version
@@ -426,6 +457,7 @@ cargo --version
 ```
 
 #### Python依赖
+
 ```bash
 # 检查dora-primespeech
 cd node-hub/dora-primespeech
@@ -517,6 +549,7 @@ warning: struct `App` is never constructed
 ### 运行时问题（待验证）
 
 以下问题需要在Phase 2测试时验证：
+
 - [ ] 是否需要手动启动Dora dataflow
 - [ ] Python节点是否正确加载
 - [ ] 音频设备是否正确初始化
@@ -569,16 +602,19 @@ cargo run -p moxin-tts 2>&1 | tee moxin-tts.log
 ### 常见问题排查
 
 #### 应用无法启动
+
 1. 检查Python节点是否安装
 2. 检查Dora是否可用
 3. 查看日志输出
 
 #### TTS不生成音频
+
 1. 检查dora-primespeech节点状态
 2. 验证模型文件是否下载
 3. 检查GPU/CPU配置
 
 #### ASR无法识别
+
 1. 检查dora-asr节点状态
 2. 验证麦克风权限
 3. 检查音频设备配置
@@ -588,11 +624,13 @@ cargo run -p moxin-tts 2>&1 | tee moxin-tts.log
 ## 📞 快速联系方式
 
 ### 项目信息
+
 - **GitHub**: https://github.com/alan0x/moxin-tts
 - **Issues**: https://github.com/alan0x/moxin-tts/issues
 - **开发者**: alan0x
 
 ### 相关项目
+
 - **上游项目**: https://github.com/mofa-org/mofa-studio
 - **GPT-SoVITS**: https://github.com/RVC-Boss/GPT-SoVITS
 - **Makepad**: https://github.com/makepad/makepad
@@ -609,6 +647,7 @@ cargo run -p moxin-tts 2>&1 | tee moxin-tts.log
    - 确认下一步任务
 
 2. **验证环境**（5分钟）
+
    ```bash
    cd "C:\Users\FPG_123\Documents\projects\moxin\mofa-studio"
    git status
@@ -618,6 +657,7 @@ cargo run -p moxin-tts 2>&1 | tee moxin-tts.log
    ```
 
 3. **重新编译**（2分钟）
+
    ```bash
    cargo build -p moxin-tts --release
    ```
@@ -655,11 +695,11 @@ cat moxin-tts-shell/IMPLEMENTATION_SUMMARY.md
 
 ## 📝 更新记录
 
-| 日期 | 版本 | 更新内容 | 作者 |
-|------|------|---------|------|
-| 2026-02-02 | 1.0 | 初始创建，Phase 1完成 | Claude Sonnet 4.5 |
-| 2026-02-03 | 2.0 | Phase 2-3完成（Shell修复、Few-Shot UI） | Claude Sonnet 4.5 |
-| 2026-02-03 | 3.0 | Phase 4完成（代码库清理） | Claude Sonnet 4.5 |
+| 日期       | 版本 | 更新内容                                | 作者              |
+| ---------- | ---- | --------------------------------------- | ----------------- |
+| 2026-02-02 | 1.0  | 初始创建，Phase 1完成                   | Claude Sonnet 4.5 |
+| 2026-02-03 | 2.0  | Phase 2-3完成（Shell修复、Few-Shot UI） | Claude Sonnet 4.5 |
+| 2026-02-03 | 3.0  | Phase 4完成（代码库清理）               | Claude Sonnet 4.5 |
 
 ---
 
@@ -682,6 +722,7 @@ cat moxin-tts-shell/IMPLEMENTATION_SUMMARY.md
 **祝工作顺利！** 🚀
 
 如有疑问，请参考：
+
 1. 本文档的"关键参考文档"部分
 2. `moxin-tts-shell/IMPLEMENTATION_SUMMARY.md`
 3. `doc/moxin-tts独立应用实施方案.md`

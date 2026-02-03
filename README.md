@@ -61,6 +61,7 @@ cd models/setup-local-models
 ```
 
 This creates a conda environment `mofa-studio` with:
+
 - Python 3.12
 - PyTorch 2.2.0, NumPy 1.26.4, Transformers 4.45.0
 
@@ -74,6 +75,7 @@ conda activate mofa-studio
 ```
 
 This installs:
+
 - Shared library: `dora-common`
 - Python nodes: `dora-asr`, `dora-primespeech`
 - Dora CLI
@@ -101,19 +103,23 @@ python download_models.py --list-voices
 # Download specific voice
 python download_models.py --voice "Luo Xiang"
 ```
+
 #### 3. Running the Application
 
 **Default Layout (Original MoFA style):**
+
 ```bash
 cargo run -p moxin-tts
 ```
 
 **MoYoYo.tts Style Layout (Modern sidebar design):**
+
 ```bash
 cargo run -p moxin-tts --features moyoyo-ui
 ```
 
 The application provides two distinct UI layouts:
+
 - **Default**: Original MoFA-style layout with system monitor and log panel
 - **MoYoYo UI**: Modern sidebar layout inspired by MoYoYo.tts, featuring a cleaner interface with a left navigation sidebar and simplified main content area
 
@@ -122,9 +128,9 @@ You can switch between layouts by using the `--features moyoyo-ui` flag when run
 For more details on the MoYoYo.tts UI implementation, see [doc/MOYOYO_UI_IMPLEMENTATION.md](doc/MOYOYO_UI_IMPLEMENTATION.md).
 Models are stored in:
 
-| Location | Contents |
-|----------|----------|
-| `~/.dora/models/asr/funasr/` | FunASR ASR models |
+| Location                      | Contents                      |
+| ----------------------------- | ----------------------------- |
+| `~/.dora/models/asr/funasr/`  | FunASR ASR models             |
 | `~/.dora/models/primespeech/` | PrimeSpeech TTS base + voices |
 
 ### Build & Run
@@ -157,21 +163,21 @@ cargo run -p moxin-tts -- --log-level debug
 
 Moxin TTS is organized as a Cargo workspace with 5 core crates:
 
-| Crate | Type | Description |
-|-------|------|-------------|
-| `moxin-tts-shell` | Binary | Standalone TTS application entry point |
-| `mofa-tts` | Library | TTS UI and application logic |
-| `mofa-widgets` | Library | Shared UI components (theme, audio, etc.) |
-| `mofa-ui` | Library | Application infrastructure and widgets |
-| `mofa-dora-bridge` | Library | Dora dataflow integration bridge |
+| Crate              | Type    | Description                               |
+| ------------------ | ------- | ----------------------------------------- |
+| `moxin-tts-shell`  | Binary  | Standalone TTS application entry point    |
+| `mofa-tts`         | Library | TTS UI and application logic              |
+| `mofa-widgets`     | Library | Shared UI components (theme, audio, etc.) |
+| `mofa-ui`          | Library | Application infrastructure and widgets    |
+| `mofa-dora-bridge` | Library | Dora dataflow integration bridge          |
 
 ### Python Nodes (node-hub/)
 
-| Node | Type | Description |
-|------|------|-------------|
+| Node               | Type   | Description                     |
+| ------------------ | ------ | ------------------------------- |
 | `dora-primespeech` | Python | GPT-SoVITS TTS synthesis engine |
-| `dora-asr` | Python | Speech recognition (FunASR) |
-| `dora-common` | Python | Shared utilities and logging |
+| `dora-asr`         | Python | Speech recognition (FunASR)     |
+| `dora-common`      | Python | Shared utilities and logging    |
 
 ### Key Documentation
 
@@ -186,6 +192,7 @@ Moxin TTS is a **functional standalone application** with the following capabili
 ### ✅ Implemented
 
 **Phase 1-4 Complete**:
+
 - ✅ Standalone application shell (moxin-tts-shell)
 - ✅ TTS screen with voice selection and text input
 - ✅ Zero-shot voice cloning UI (Express mode)
@@ -197,6 +204,7 @@ Moxin TTS is a **functional standalone application** with the following capabili
 ### 🚧 In Progress
 
 **Phase 5: Testing & Polish**:
+
 - 🚧 TTS generation testing
 - 🚧 Voice cloning verification
 - 🚧 Few-shot training backend integration
@@ -205,12 +213,14 @@ Moxin TTS is a **functional standalone application** with the following capabili
 ## 🎙️ Voice Cloning Modes
 
 ### Express Mode (Zero-Shot)
+
 - **Audio Length**: 5-10 seconds
 - **Use Case**: Quick voice cloning
 - **Quality**: Good for most use cases
 - **Process**: Upload/record → Clone immediately
 
 ### Pro Mode (Few-Shot)
+
 - **Audio Length**: 3-10 minutes
 - **Use Case**: High-quality professional voices
 - **Quality**: Exceptional fidelity
@@ -307,4 +317,4 @@ You may obtain a copy of the License at
 
 ---
 
-*Built with ❤️ using Rust, Makepad, and GPT-SoVITS*
+_Built with ❤️ using Rust, Makepad, and GPT-SoVITS_
