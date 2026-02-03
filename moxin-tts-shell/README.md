@@ -56,14 +56,16 @@ Options:
 
 ## Architecture
 
-Moxin TTS is built on top of the MoFA Studio framework:
+Moxin TTS is a standalone application extracted from the MoFA Studio framework:
 
 ```
-moxin-tts-shell/        # Standalone application shell
+moxin-tts/
+├── moxin-tts-shell/    # Standalone application entry (this crate)
+├── apps/mofa-tts/      # TTS application logic
 ├── mofa-widgets/       # Shared UI components
-├── mofa-ui/            # Theme and common UI elements
+├── mofa-ui/            # Application infrastructure
 ├── mofa-dora-bridge/   # Dora dataflow integration
-└── mofa-tts/           # TTS application logic
+└── node-hub/           # Python Dora nodes (TTS & ASR)
 ```
 
 ### Key Components

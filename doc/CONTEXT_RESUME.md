@@ -4,8 +4,8 @@
 
 **文档创建时间**: 2026-02-02
 **最后更新时间**: 2026-02-03
-**文档版本**: 2.0
-**当前阶段**: Phase 3 完成（Few-Shot训练功能），Moxin TTS 独立应用可正常运行
+**文档版本**: 3.0
+**当前阶段**: Phase 4 完成（代码库清理），Moxin TTS 独立应用代码库已精简
 
 ---
 
@@ -52,27 +52,28 @@
 
 ```
 C:\Users\FPG_123\Documents\projects\moxin\mofa-studio\
-├── moxin-tts-shell/          # ⭐ 新创建的独立应用
+├── moxin-tts-shell/          # ⭐ 独立 TTS 应用入口
 │   ├── Cargo.toml            # 包配置
 │   ├── src/
 │   │   ├── main.rs           # 入口（47行）
 │   │   └── app.rs            # 应用逻辑（147行）
-│   ├── resources/            # 资源目录（待添加）
+│   ├── resources/            # 资源目录
 │   ├── README.md
 │   ├── BUILDING.md
 │   └── IMPLEMENTATION_SUMMARY.md
 │
-├── apps/mofa-tts/            # TTS应用逻辑（库）
-│   ├── src/
-│   │   ├── lib.rs
-│   │   ├── screen.rs         # TTS屏幕
-│   │   ├── voice_selector.rs
-│   │   ├── voice_clone_modal.rs
-│   │   └── dora_integration.rs
-│   └── Cargo.toml
+├── apps/
+│   └── mofa-tts/             # TTS应用逻辑（库）
+│       ├── src/
+│       │   ├── lib.rs
+│       │   ├── screen.rs         # TTS屏幕
+│       │   ├── voice_selector.rs
+│       │   ├── voice_clone_modal.rs
+│       │   └── dora_integration.rs
+│       └── Cargo.toml
 │
 ├── mofa-widgets/             # 共享UI组件
-├── mofa-ui/                  # 主题和系统监控
+├── mofa-ui/                  # 应用基础设施
 ├── mofa-dora-bridge/         # Dora集成
 │
 ├── node-hub/                 # Python Dora节点
@@ -87,7 +88,7 @@ C:\Users\FPG_123\Documents\projects\moxin\mofa-studio\
 │   ├── mofa-tts-fewshot疑问解答.md
 │   └── moxin-tts独立应用实施方案.md
 │
-├── Cargo.toml                # 工作区配置（已更新）
+├── Cargo.toml                # 工作区配置（已精简）
 └── README.md
 ```
 
@@ -216,6 +217,26 @@ cargo build --package moxin-tts --release
 - ✅ `FEW_SHOT_UI_IMPLEMENTATION_GUIDE.md` - 完整实施指南
 - ✅ `VOICE_CLONE_MODAL_MODIFICATIONS_SUMMARY.md` - 修改总结
 
+### Phase 4: 代码库清理 (100%完成)
+
+#### 4.1 移除未使用的应用
+- ✅ 删除 apps/mofa-debate（多方辩论应用）
+- ✅ 删除 apps/mofa-fm（文件管理器应用）
+- ✅ 删除 apps/mofa-settings（设置应用）
+- ✅ 删除 apps/mofa-test-app（测试应用）
+- ✅ 删除 mofa-studio-shell（原多应用入口）
+
+#### 4.2 精简 Workspace 配置
+- ✅ 更新 Cargo.toml workspace members
+- ✅ 移除 mofa-studio-shell 成员
+- ✅ 将 apps/* 改为明确的 apps/mofa-tts
+- ✅ 保留核心 TTS 栈（5个组件）
+
+#### 4.3 清理效果
+- ✅ 删除 128 个文件，约 24K 行代码
+- ✅ 编译验证通过（cargo build -p moxin-tts）
+- ✅ 代码库更聚焦、简洁、独立
+
 ---
 
 ## 🔑 关键决策记录
@@ -271,10 +292,11 @@ origin: https://github.com/alan0x/moxin-tts.git
 # 当前分支
 main
 
-# 未提交的更改
-M  Cargo.toml                              # 已修改
-?? doc/moxin-tts独立应用实施方案.md         # 新文件
-?? moxin-tts-shell/                        # 新目录
+# 最新提交
+cb0f355 - refactor: remove unused apps and mofa-studio-shell (2026-02-03)
+
+# 工作区状态
+Working tree clean ✅
 ```
 
 ### 编译状态
@@ -290,101 +312,59 @@ M  Cargo.toml                              # 已修改
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 编译 | ✅ 完成 | Release build成功 |
-| 运行 | 🚧 待测试 | 需要运行验证 |
+| 代码库清理 | ✅ 完成 | 移除未使用组件，精简24K行代码 |
+| 运行 | ✅ 验证 | 应用可正常启动 |
 | TTS生成 | 🚧 待测试 | 核心功能 |
 | 语音选择 | 🚧 待测试 | 14+预置语音 |
-| 零样本克隆 | 🚧 待测试 | 5-10秒音频 |
-| Few-shot训练 | ❌ 未实现 | Phase 3任务 |
+| 零样本克隆 | ✅ UI完成 | Express模式（5-10秒音频） |
+| Few-shot训练 | ✅ UI完成 | Pro模式（3-10分钟音频，待后端集成） |
 
 ---
 
 ## 🚀 下一步计划
 
-### Phase 2: UI调整和功能验证 (预计0.5-1小时)
+### Phase 5: 功能测试和完善 (进行中)
 
-#### 2.1 运行测试
+#### 5.1 TTS 核心功能测试
 ```bash
 cd "C:\Users\FPG_123\Documents\projects\moxin\mofa-studio"
 cargo run -p moxin-tts
 ```
 
-**验证清单**:
-- [ ] 应用成功启动
-- [ ] 窗口标题显示："Moxin TTS - Voice Cloning & Text-to-Speech"
-- [ ] 窗口大小合适（1200x800）
-- [ ] TTS屏幕正常显示
-- [ ] 没有sidebar或tabs
+**测试清单**:
+- [ ] **语音选择**: 测试预置语音选择功能
+- [ ] **文本输入**: 验证文本输入和编辑
+- [ ] **TTS生成**: 测试音频生成功能
+- [ ] **音频播放**: 验证音频播放功能
+- [ ] **音频下载**: 测试音频文件导出
 
-#### 2.2 功能测试
-- [ ] **语音选择**: 能够选择不同语音
-- [ ] **文本输入**: 能够输入文本
-- [ ] **TTS生成**: 点击"Generate Speech"生成音频
-- [ ] **音频播放**: 能够播放生成的音频
-- [ ] **音频下载**: 能够下载音频文件
-- [ ] **零样本克隆**: 能够上传/录制音频进行克隆
-- [ ] **ASR识别**: 录制音频后能够自动识别文本
+#### 5.2 语音克隆功能测试
+- [ ] **Express模式**: 测试零样本克隆（5-10秒音频）
+- [ ] **音频录制**: 验证短音频录制功能
+- [ ] **音频上传**: 测试音频文件上传
+- [ ] **ASR识别**: 验证自动文本识别
+- [ ] **Pro模式**: 测试Few-Shot训练UI（后端待集成）
 
-#### 2.3 UI调整（如需要）
-- [ ] 调整窗口默认大小
-- [ ] 优化布局
-- [ ] 添加应用图标（可选）
-- [ ] 确认暗色模式正常
+#### 5.3 性能和稳定性
+- [ ] 测试长时间运行稳定性
+- [ ] 验证内存使用情况
+- [ ] 检查Dora dataflow连接
+- [ ] 测试错误处理和恢复
 
-### Phase 3: 文档和提交 (预计0.5小时)
+### Phase 6: 文档完善和发布准备
 
-#### 3.1 更新文档
-- [ ] 更新根目录`README.md`
-  - 添加Moxin TTS介绍
-  - 更新项目结构说明
-- [ ] 创建快速开始指南
+#### 6.1 文档更新
+- [x] 更新根目录`README.md`
+- [x] 更新`CONTEXT_RESUME.md`
+- [ ] 创建用户使用指南
 - [ ] 编写故障排除文档
+- [ ] 添加部署指南
 
-#### 3.2 Git提交
-```bash
-# 添加文件
-git add Cargo.toml
-git add moxin-tts-shell/
-git add doc/
-
-# 提交
-git commit -m "feat: add moxin-tts standalone application
-
-- Create new moxin-tts-shell binary crate
-- Simplified app structure without sidebar and tabs
-- Direct display of TTS screen
-- Standalone Dora state and app data initialization
-- CLI support for log level and dataflow configuration
-- Complete build and packaging documentation
-
-This is a standalone TTS application extracted from mofa-studio,
-focused solely on voice cloning and text-to-speech functionality.
-
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
-
-# 推送
-git push origin main
-```
-
-### Phase 4: Few-Shot训练功能 (预计3-5小时)
-
-**参考**: `doc/mofa-tts-fewshot决策分析.md` 方案1B
-
-#### 4.1 训练流程设计
-- [ ] 设计训练UI流程
-- [ ] 音频上传/录制界面
-- [ ] 音色命名界面
-- [ ] 训练进度显示
-
-#### 4.2 封装训练脚本
-- [ ] Rust subprocess调用Python训练脚本
-- [ ] 参数传递和配置生成
-- [ ] 日志文件解析
-- [ ] 训练进度监控
-
-#### 4.3 集成到UI
-- [ ] 添加"Few-Shot Clone"按钮
-- [ ] 训练完成后刷新语音列表
-- [ ] 错误处理和用户提示
+#### 6.2 发布准备
+- [ ] 添加应用图标
+- [ ] 优化启动性能
+- [ ] 完善错误提示
+- [ ] 准备发布说明
 
 ---
 
@@ -646,6 +626,8 @@ cat moxin-tts-shell/IMPLEMENTATION_SUMMARY.md
 | 日期 | 版本 | 更新内容 | 作者 |
 |------|------|---------|------|
 | 2026-02-02 | 1.0 | 初始创建，Phase 1完成 | Claude Sonnet 4.5 |
+| 2026-02-03 | 2.0 | Phase 2-3完成（Shell修复、Few-Shot UI） | Claude Sonnet 4.5 |
+| 2026-02-03 | 3.0 | Phase 4完成（代码库清理） | Claude Sonnet 4.5 |
 
 ---
 
@@ -655,10 +637,11 @@ cat moxin-tts-shell/IMPLEMENTATION_SUMMARY.md
 
 - [ ] 已完整阅读本文档
 - [ ] 理解项目目标和背景
-- [ ] 知道当前进度（Phase 1完成）
-- [ ] 清楚下一步任务（Phase 2: 功能测试）
+- [ ] 知道当前进度（Phase 1-4完成）
+- [ ] 清楚下一步任务（Phase 5: 功能测试）
 - [ ] 环境配置正常
 - [ ] 代码可以编译
+- [ ] 代码库已精简（移除未使用组件）
 - [ ] 已阅读相关参考文档
 - [ ] 准备好开始工作
 

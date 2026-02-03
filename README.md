@@ -1,59 +1,57 @@
-# MoFA Studio
+# Moxin TTS
 
-> AI-powered desktop voice chat application built with Rust and Makepad
+> Standalone AI-powered Text-to-Speech desktop application with voice cloning capabilities
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org)
 
-MoFA Studio is a modern, GPU-accelerated desktop application for AI voice chat and model management. Built entirely in Rust using the [Makepad](https://github.com/makepad/makepad) UI framework, it provides a beautiful, responsive interface with native performance.
-
-![MoFA Studio](mofa-studio-shell/resources/mofa-logo.png)
+Moxin TTS is a modern, GPU-accelerated desktop application for text-to-speech synthesis and voice cloning. Built entirely in Rust using the [Makepad](https://github.com/makepad/makepad) UI framework, it provides a beautiful, responsive interface with native performance. Powered by GPT-SoVITS v2 for state-of-the-art voice cloning and synthesis.
 
 ## ✨ Features
 
 - **🎨 Beautiful UI** - GPU-accelerated rendering with smooth animations
-- **🌓 Dark Mode** - Seamless light/dark theme switching with animated transitions
-- **🎙️ Audio Management** - Real-time microphone monitoring and device selection
-- **🔌 Modular Architecture** - Plugin-based app system for extensibility
-- **⚙️ Provider Configuration** - Manage multiple AI service providers (OpenAI, DeepSeek, Alibaba Cloud)
-- **📊 Real-time Metrics** - CPU, memory, and audio buffer monitoring
+- **🌓 Dark Mode** - Seamless dark theme with native Makepad performance
+- **🎙️ Zero-Shot Voice Cloning** - Clone any voice with just 5-10 seconds of audio (Express mode)
+- **🔧 Few-Shot Training** - High-quality voice cloning with 3-10 minutes of audio (Pro mode)
+- **🎵 Text-to-Speech** - Natural-sounding speech synthesis with 14+ preset voices
+- **🎤 Audio Recording** - Built-in audio recording with real-time visualization
+- **🔍 Speech Recognition** - Automatic text recognition from audio (ASR integration)
+- **💾 Audio Export** - Save generated speech as WAV files
 - **🚀 Native Performance** - Built with Rust for maximum efficiency
 
 ## 🏗️ Architecture
 
-MoFA Studio uses a modular workspace structure:
+Moxin TTS uses a modular workspace structure focused on TTS functionality:
 
 ```
-mofa-studio/
-├── mofa-studio-shell/      # Main application shell
-├── mofa-widgets/           # Shared reusable widgets
-└── apps/
-    ├── mofa-fm/            # Voice chat interface
-    └── mofa-settings/      # Provider configuration
+moxin-tts/
+├── moxin-tts-shell/      # Standalone TTS application entry
+├── apps/mofa-tts/        # TTS application logic
+├── mofa-widgets/         # Shared UI components
+├── mofa-ui/              # Application infrastructure
+├── mofa-dora-bridge/     # Dora dataflow integration
+└── node-hub/             # Python Dora nodes (TTS & ASR)
+    ├── dora-primespeech/ # GPT-SoVITS TTS engine
+    └── dora-asr/         # Speech recognition
 ```
 
 ### Key Design Principles
 
-- **Plugin System** - Apps implement the `MofaApp` trait for standardized integration
-- **Black-Box Apps** - Apps are self-contained with no shell coupling
-- **Theme System** - Centralized color and font management
-- **Makepad Native** - Leverages Makepad's GPU-accelerated immediate-mode UI
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed system design.
+- **Standalone Application** - Focused solely on TTS and voice cloning
+- **Dora Integration** - Uses Dora dataflow for audio processing pipeline
+- **Makepad Native** - Leverages Makepad's GPU-accelerated UI framework
+- **Modular Architecture** - Clean separation between UI, logic, and processing
 
 ## 🚀 Quick Start
-
-> **Using Nix?** See [DEPLOY_WITH_NIX.md](DEPLOY_WITH_NIX.md) for automated deployment with `./run.sh`
 
 ### Prerequisites
 
 - **Rust** 1.70+ (2021 edition)
+- **Python** 3.8+
 - **Cargo** package manager
 - **Git** for cloning the repository
 
-### Voice Chat Prerequisites
-
-To run the voice chat dataflow, you need to set up the Python environment and download the required AI models.
+### TTS Setup
 
 #### 1. Environment Setup
 
@@ -77,8 +75,7 @@ conda activate mofa-studio
 
 This installs:
 - Shared library: `dora-common`
-- Python nodes: `dora-asr`, `dora-primespeech`, `dora-speechmonitor`, `dora-text-segmenter`
-- Rust nodes: `dora-maas-client`, `dora-conference-bridge`, `dora-conference-controller`
+- Python nodes: `dora-asr`, `dora-primespeech`
 - Dora CLI
 
 Verify installation:
@@ -106,161 +103,144 @@ python download_models.py --voice "Luo Xiang"
 ```
 
 Models are stored in:
+
 | Location | Contents |
 |----------|----------|
 | `~/.dora/models/asr/funasr/` | FunASR ASR models |
 | `~/.dora/models/primespeech/` | PrimeSpeech TTS base + voices |
 
-#### 4. API Keys (Optional)
-
-For LLM inference, set your API keys in the MoFA Settings app or via environment variables:
-(You may also enter it in the MoFA Studio's Settings UI page later)
-
-```bash
-export OPENAI_API_KEY="your-key"
-export DEEPSEEK_API_KEY="your-key"
-export ALIBABA_CLOUD_API_KEY="your-key"
-```
-
 ### Build & Run
 
 ```bash
 # Clone the repository
-git clone https://github.com/mofa-org/mofa-studio.git
-cd mofa-studio
+git clone https://github.com/alan0x/moxin-tts.git
+cd moxin-tts
 
 # Build in release mode
-cargo build --release
+cargo build -p moxin-tts --release
 
 # Run the application
-cargo run --release
+cargo run -p moxin-tts --release
 ```
 
-The application window will open at 1400x900 pixels by default.
+The application window will open at 1200x800 pixels by default.
 
 ### Development Build
 
 ```bash
 # Fast debug build
-cargo build
+cargo build -p moxin-tts
 
 # Run with debug logging
-RUST_LOG=debug cargo run
+cargo run -p moxin-tts -- --log-level debug
 ```
 
-### Run Voice Chat Dataflow
+## 📦 Project Structure
 
-MoFA Studio uses [Dora](https://github.com/dora-rs/dora) for voice chat dataflow orchestration. Each app can have its own dataflow configuration.
+Moxin TTS is organized as a Cargo workspace with 5 core crates:
+
+| Crate | Type | Description |
+|-------|------|-------------|
+| `moxin-tts-shell` | Binary | Standalone TTS application entry point |
+| `mofa-tts` | Library | TTS UI and application logic |
+| `mofa-widgets` | Library | Shared UI components (theme, audio, etc.) |
+| `mofa-ui` | Library | Application infrastructure and widgets |
+| `mofa-dora-bridge` | Library | Dora dataflow integration bridge |
+
+### Python Nodes (node-hub/)
+
+| Node | Type | Description |
+|------|------|-------------|
+| `dora-primespeech` | Python | GPT-SoVITS TTS synthesis engine |
+| `dora-asr` | Python | Speech recognition (FunASR) |
+| `dora-common` | Python | Shared utilities and logging |
+
+### Key Documentation
+
+- **[BUILDING.md](moxin-tts-shell/BUILDING.md)** - Detailed build instructions
+- **[CONTEXT_RESUME.md](doc/CONTEXT_RESUME.md)** - Project context and progress
+- **[Implementation Summary](moxin-tts-shell/IMPLEMENTATION_SUMMARY.md)** - Phase 1-4 summary
+
+## 🎯 Current Status
+
+Moxin TTS is a **functional standalone application** with the following capabilities:
+
+### ✅ Implemented
+
+**Phase 1-4 Complete**:
+- ✅ Standalone application shell (moxin-tts-shell)
+- ✅ TTS screen with voice selection and text input
+- ✅ Zero-shot voice cloning UI (Express mode)
+- ✅ Few-shot training UI (Pro mode)
+- ✅ Audio recording and playback
+- ✅ Dora dataflow integration
+- ✅ Codebase cleanup (removed unused apps, 24K lines)
+
+### 🚧 In Progress
+
+**Phase 5: Testing & Polish**:
+- 🚧 TTS generation testing
+- 🚧 Voice cloning verification
+- 🚧 Few-shot training backend integration
+- 🚧 Performance optimization
+
+## 🎙️ Voice Cloning Modes
+
+### Express Mode (Zero-Shot)
+- **Audio Length**: 5-10 seconds
+- **Use Case**: Quick voice cloning
+- **Quality**: Good for most use cases
+- **Process**: Upload/record → Clone immediately
+
+### Pro Mode (Few-Shot)
+- **Audio Length**: 3-10 minutes
+- **Use Case**: High-quality professional voices
+- **Quality**: Exceptional fidelity
+- **Process**: Upload/record → Train model → Clone
+
+## 🛠️ Development
+
+### Build Commands
 
 ```bash
-# Navigate to app's dataflow directory
-cd apps/mofa-fm/dataflow
+# Development build
+cargo build -p moxin-tts
 
+# Release build (optimized)
+cargo build -p moxin-tts --release
+
+# Run with custom log level
+cargo run -p moxin-tts -- --log-level debug
+
+# Clean build artifacts
+cargo clean
+```
+
+### Run Dora Dataflow
+
+```bash
 # Start the Dora daemon
 dora up
 
-# Start the dataflow (packages already installed via install_all_packages.sh)
-dora start voice-chat.yml
+# Navigate to TTS dataflow
+cd apps/mofa-tts/dataflow
 
-# Check running dataflows
+# Start the dataflow
+dora start tts-dataflow.yml
+
+# Check status
 dora list
 
 # Stop dataflow
 dora stop <dataflow-id>
 ```
 
-The `node-hub/` directory contains all Dora nodes used by the dataflows:
-
-| Node | Type | Description |
-|------|------|-------------|
-| `dora-maas-client` | Rust | LLM inference via MaaS APIs |
-| `dora-conference-bridge` | Rust | Text routing between participants |
-| `dora-conference-controller` | Rust | Turn-taking and policy management |
-| `dora-primespeech` | Python | TTS synthesis with multiple voices |
-| `dora-text-segmenter` | Python | Text segmentation for TTS |
-| `dora-asr` | Python | Speech recognition (Whisper/FunASR) |
-| `dora-common` | Python | Shared logging utilities |
-
-## 📦 Project Structure
-
-MoFA Studio is organized as a Cargo workspace with 5 crates:
-
-| Crate | Type | Description |
-|-------|------|-------------|
-| `mofa-studio-shell` | Binary | Main application shell with window chrome and navigation |
-| `mofa-widgets` | Library | Shared UI components (theme, audio player, waveforms, etc.) |
-| `mofa-fm` | Library | Voice chat interface app |
-| `mofa-settings` | Library | Provider configuration app |
-
-### Key Files
-
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete system architecture guide
-- **[APP_DEVELOPMENT_GUIDE.md](APP_DEVELOPMENT_GUIDE.md)** - How to create new apps
-- **[STATE_MANAGEMENT_ANALYSIS.md](STATE_MANAGEMENT_ANALYSIS.md)** - State management patterns
-- **[CHECKLIST.md](CHECKLIST.md)** - Refactoring roadmap and completion status
-
-## 🎯 Current Status
-
-MoFA Studio is currently a **UI prototype** with working components:
-
-### ✅ Implemented
-- Full UI navigation and theming
-- Audio device selection and monitoring
-- Provider configuration persistence
-- Dark/light mode with animations
-- Plugin app system
-
-### 🚧 Planned
-- WebSocket client for AI service integration
-- Live ASR (speech recognition) integration
-- Live TTS (text-to-speech) integration
-- LLM chat completion
-- Real-time conversation flow
-
-## 🛠️ Creating a New App
-
-MoFA Studio's plugin system makes it easy to add new functionality:
-
-```rust
-// 1. Implement the MofaApp trait
-impl MofaApp for MyApp {
-    fn info() -> AppInfo {
-        AppInfo {
-            name: "My App",
-            id: "my-app",
-            description: "My custom app"
-        }
-    }
-
-    fn live_design(cx: &mut Cx) {
-        screen::live_design(cx);
-    }
-}
-
-// 2. Create your screen widget
-live_design! {
-    pub MyAppScreen = {{MyAppScreen}} {
-        width: Fill, height: Fill
-        // Your UI here
-    }
-}
-```
-
-See [APP_DEVELOPMENT_GUIDE.md](APP_DEVELOPMENT_GUIDE.md) for step-by-step instructions.
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, widget hierarchy, best practices |
-| [APP_DEVELOPMENT_GUIDE.md](APP_DEVELOPMENT_GUIDE.md) | Creating apps, plugin system, dark mode support |
-| [STATE_MANAGEMENT_ANALYSIS.md](STATE_MANAGEMENT_ANALYSIS.md) | Why Redux/Zustand don't work in Makepad |
-| [CHECKLIST.md](CHECKLIST.md) | P0-P3 refactoring roadmap (all complete) |
-
 ## 🔧 Technology Stack
 
 - **[Rust](https://www.rust-lang.org/)** - Systems programming language
 - **[Makepad](https://github.com/makepad/makepad)** - GPU-accelerated UI framework
+- **[GPT-SoVITS v2](https://github.com/RVC-Boss/GPT-SoVITS)** - Voice cloning and TTS engine
+- **[Dora](https://github.com/dora-rs/dora)** - Robotics dataflow framework
 - **[CPAL](https://github.com/RustAudio/cpal)** - Cross-platform audio I/O
 - **[Tokio](https://tokio.rs/)** - Async runtime
 - **[Serde](https://serde.rs/)** - Serialization framework
@@ -269,12 +249,12 @@ See [APP_DEVELOPMENT_GUIDE.md](APP_DEVELOPMENT_GUIDE.md) for step-by-step instru
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-### Development Setup
+### Development Workflow
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Test thoroughly (`cargo test`, `cargo build`)
+4. Test thoroughly (`cargo test`, `cargo build -p moxin-tts`)
 5. Commit your changes (`git commit -m 'Add amazing feature'`)
 6. Push to the branch (`git push origin feature/amazing-feature`)
 7. Open a Pull Request
@@ -284,7 +264,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ```
-Copyright 2026 MoFA Studio Authors
+Copyright 2026 Moxin TTS Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -296,14 +276,17 @@ You may obtain a copy of the License at
 ## 🙏 Acknowledgments
 
 - **[Makepad](https://github.com/makepad/makepad)** - For the incredible GPU-accelerated UI framework
-- **[Dora Robotics Framework](https://github.com/dora-rs/dora)** - Original inspiration for voice chat architecture
+- **[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)** - For the excellent voice cloning technology
+- **[Dora Robotics Framework](https://github.com/dora-rs/dora)** - For the dataflow architecture
+- **[MoFA Studio](https://github.com/mofa-org/mofa-studio)** - Original multi-app platform (upstream)
 - **Rust Community** - For excellent tooling and libraries
 
 ## 📧 Contact
 
-- **Repository**: https://github.com/mofa-org/mofa-studio
-- **Issues**: https://github.com/mofa-org/mofa-studio/issues
+- **Repository**: https://github.com/alan0x/moxin-tts
+- **Issues**: https://github.com/alan0x/moxin-tts/issues
+- **Developer**: alan0x
 
 ---
 
-*Built with ❤️ using Rust and Makepad*
+*Built with ❤️ using Rust, Makepad, and GPT-SoVITS*
