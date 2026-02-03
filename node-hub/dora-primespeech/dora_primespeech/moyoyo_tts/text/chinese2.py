@@ -30,7 +30,11 @@ if is_g2pw:
     from moyoyo_tts.text.g2pw import G2PWPinyin, correct_pronunciation
 
     parent_directory = os.path.dirname(current_file_path)
-    model_source = os.environ.get("bert_path", "moyoyo_tts/pretrained_models/chinese-roberta-wwm-ext-large")
+    _default_bert_path = os.path.join(
+        os.environ.get("PRIMESPEECH_MODEL_DIR", os.path.join(os.path.expanduser("~"), ".dora", "models", "primespeech")),
+        "moyoyo", "chinese-roberta-wwm-ext-large"
+    )
+    model_source = os.environ.get("bert_path", _default_bert_path)
     
     # Load G2PW from models directory
     primespeech_model_dir = os.environ.get("PRIMESPEECH_MODEL_DIR")

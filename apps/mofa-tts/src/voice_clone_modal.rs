@@ -845,7 +845,7 @@ live_design! {
                                         return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
                                     }
                                 }
-                                text: "Training Audio Recording"
+                                text: "Training Audio"
                             }
 
                             instruction = <Label> {
@@ -857,7 +857,7 @@ live_design! {
                                         return mix((TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
                                     }
                                 }
-                                text: "Record 3-10 minutes of continuous speech. Speak clearly with varied sentences for best results."
+                                text: "Record or upload audio (WAV, 10s-10min). Longer recordings (3-10 min) produce better results."
                             }
 
                             record_row = <View> {
@@ -937,6 +937,64 @@ live_design! {
                                         }
                                         text: "Target: 5-10 minutes"
                                     }
+                                }
+
+                                or_label = <Label> {
+                                    width: Fit, height: Fit
+                                    margin: {left: 8, right: 8}
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: { font_size: 11.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((TEXT_TERTIARY), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                        }
+                                    }
+                                    text: "or"
+                                }
+
+                                upload_training_btn = <Button> {
+                                    width: Fit, height: 36
+                                    padding: {left: 16, right: 16, top: 8, bottom: 8}
+
+                                    draw_bg: {
+                                        instance dark_mode: 0.0
+                                        fn pixel(self) -> vec4 {
+                                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                            sdf.box(1., 1., self.rect_size.x - 2., self.rect_size.y - 2., 6.0);
+                                            let bg = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                            let border = mix((SLATE_300), (SLATE_500), self.dark_mode);
+                                            sdf.fill(bg);
+                                            sdf.stroke(border, 1.0);
+                                            return sdf.result;
+                                        }
+                                    }
+
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: <FONT_SEMIBOLD>{ font_size: 10.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                        }
+                                    }
+
+                                    text: "Upload Audio File"
+                                }
+                            }
+
+                            uploaded_file_info = <View> {
+                                width: Fill, height: Fit
+                                visible: false
+
+                                label = <Label> {
+                                    width: Fill, height: Fit
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: { font_size: 11.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((GREEN_600), (GREEN_400), self.dark_mode);
+                                        }
+                                    }
+                                    text: ""
                                 }
                             }
 
@@ -1385,6 +1443,11 @@ pub struct VoiceCloneModal {
 
     #[rust]
     training_recording_start: Option<Instant>,
+
+    #[rust]
+    gpu_check_done: bool,
+    #[rust]
+    has_gpu: bool,
 }
 
 impl LiveHook for VoiceCloneModal {
@@ -1800,6 +1863,18 @@ impl Widget for VoiceCloneModal {
             match event.hits(cx, record_btn.area()) {
                 Hit::FingerUp(fe) if fe.was_tap() => {
                     self.toggle_training_recording(cx);
+                }
+                _ => {}
+            }
+
+            // Upload training audio button
+            let upload_training_btn = self.view.button(ids!(
+                modal_container.modal_wrapper.modal_content.body.pro_mode_content
+                .training_recording_section.record_row.upload_training_btn
+            ));
+            match event.hits(cx, upload_training_btn.area()) {
+                Hit::FingerUp(fe) if fe.was_tap() => {
+                    self.open_training_file_dialog(cx);
                 }
                 _ => {}
             }
@@ -3057,10 +3132,23 @@ impl VoiceCloneModal {
 
         self.add_training_log(cx, &format!("[INFO] Recording stopped ({:.1}s)", duration));
 
-        // Validate duration (must be 3-10 minutes = 180-600 seconds)
-        if duration < 180.0 {
+        // Reset record button UI and duration label regardless of validation outcome
+        self.view.button(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_recording_section.record_row.record_btn
+        )).apply_over(cx, live! { draw_bg: { recording: 0.0 } });
+
+        self.view.label(ids!(
+            modal_container.modal_wrapper.modal_content.body.pro_mode_content
+            .training_recording_section.record_row.recording_info.duration_label
+        )).set_text(cx, &format!("Recorded: {:.1}s", duration));
+
+        self.view.redraw(cx);
+
+        // Validate duration (minimum 10 seconds)
+        if duration < 10.0 {
             self.add_training_log(cx, &format!(
-                "[ERROR] Recording too short: {:.1}s (minimum: 180s = 3 minutes)",
+                "[ERROR] Recording too short: {:.1}s (minimum: 10s)",
                 duration
             ));
             self.training_audio_file = None;
@@ -3122,11 +3210,155 @@ impl VoiceCloneModal {
             }
         }
 
-        // Update UI
-        self.view.button(ids!(
-            modal_container.modal_wrapper.modal_content.body.pro_mode_content
-            .training_recording_section.record_row.record_btn
-        )).apply_over(cx, live! { draw_bg: { recording: 0.0 } });
+    }
+
+    fn open_training_file_dialog(&mut self, cx: &mut Cx) {
+        let dialog = rfd::FileDialog::new()
+            .add_filter("Audio Files", &["wav", "mp3", "flac", "ogg"])
+            .add_filter("WAV Files", &["wav"])
+            .set_title("Select Training Audio (10s-10min)");
+
+        if let Some(path) = dialog.pick_file() {
+            self.handle_training_file_selected(cx, path);
+        }
+    }
+
+    fn handle_training_file_selected(&mut self, cx: &mut Cx, path: PathBuf) {
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+
+        self.add_training_log(cx, &format!("[INFO] Loading audio file: {}", file_name));
+
+        // Read WAV file using hound
+        let reader = match hound::WavReader::open(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("Failed to read audio file: {}", e);
+                self.add_training_log(cx, &format!("[ERROR] {}", msg));
+                self.show_error(cx, &msg);
+                return;
+            }
+        };
+
+        let spec = reader.spec();
+        let source_sample_rate = spec.sample_rate;
+        let channels = spec.channels as u32;
+
+        // Read all samples and convert to mono f32
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Int => {
+                let bit_depth = spec.bits_per_sample;
+                let max_val = (1u32 << (bit_depth - 1)) as f32;
+                reader
+                    .into_samples::<i32>()
+                    .filter_map(|s| s.ok())
+                    .collect::<Vec<i32>>()
+                    .chunks(channels as usize)
+                    .map(|chunk| {
+                        let sum: f32 = chunk.iter().map(|&s| s as f32 / max_val).sum();
+                        sum / channels as f32
+                    })
+                    .collect()
+            }
+            hound::SampleFormat::Float => {
+                reader
+                    .into_samples::<f32>()
+                    .filter_map(|s| s.ok())
+                    .collect::<Vec<f32>>()
+                    .chunks(channels as usize)
+                    .map(|chunk| {
+                        let sum: f32 = chunk.iter().sum();
+                        sum / channels as f32
+                    })
+                    .collect()
+            }
+        };
+
+        // Calculate duration
+        let duration = samples.len() as f32 / source_sample_rate as f32;
+
+        self.add_training_log(cx, &format!(
+            "[INFO] Audio loaded: {:.1}s, {}Hz, {} ch",
+            duration, source_sample_rate, channels
+        ));
+
+        // Validate duration (minimum 10 seconds)
+        if duration < 10.0 {
+            let msg = format!(
+                "Audio too short: {:.1}s (minimum: 10s)",
+                duration
+            );
+            self.add_training_log(cx, &format!("[ERROR] {}", msg));
+            self.show_error(cx, &msg);
+            return;
+        }
+
+        if duration > 600.0 {
+            self.add_training_log(cx, &format!(
+                "[WARNING] Audio too long: {:.1}s (will be trimmed to 600s = 10 minutes)",
+                duration
+            ));
+        }
+
+        // Resample to 32kHz (required by GPT-SoVITS)
+        let target_sample_rate = 32000;
+        let resampled = if source_sample_rate != target_sample_rate {
+            Self::resample(&samples, source_sample_rate, target_sample_rate)
+        } else {
+            samples
+        };
+
+        // Store samples
+        self.training_audio_samples = resampled;
+
+        // Save to temp file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!(
+            "training_audio_{}.wav",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+
+        match Self::save_wav_static(&temp_file, &self.training_audio_samples, target_sample_rate) {
+            Ok(_) => {
+                self.training_audio_file = Some(temp_file.clone());
+                self.add_training_log(cx, &format!(
+                    "[SUCCESS] Audio file ready ({:.1}s, {:.1} MB)",
+                    duration,
+                    (self.training_audio_samples.len() * 4) as f64 / 1_000_000.0
+                ));
+
+                // Update duration label
+                self.view.label(ids!(
+                    modal_container.modal_wrapper.modal_content.body.pro_mode_content
+                    .training_recording_section.record_row.recording_info.duration_label
+                )).set_text(cx, &format!("Uploaded: {:.1}s", duration));
+
+                // Show uploaded file info
+                self.view.label(ids!(
+                    modal_container.modal_wrapper.modal_content.body.pro_mode_content
+                    .training_recording_section.uploaded_file_info.label
+                )).set_text(cx, &format!("File: {}", file_name));
+                self.view.view(ids!(
+                    modal_container.modal_wrapper.modal_content.body.pro_mode_content
+                    .training_recording_section.uploaded_file_info
+                )).set_visible(cx, true);
+
+                // Enable start training button
+                self.view.button(ids!(
+                    modal_container.modal_wrapper.modal_content.footer.pro_actions.start_training_btn
+                )).set_enabled(cx, true);
+            }
+            Err(e) => {
+                self.add_training_log(cx, &format!("[ERROR] Failed to save audio: {}", e));
+                self.show_error(cx, &format!("Failed to save audio: {}", e));
+            }
+        }
 
         self.view.redraw(cx);
     }
@@ -3138,12 +3370,18 @@ impl VoiceCloneModal {
         )).text();
 
         if voice_name.is_empty() {
-            self.add_training_log(cx, "[ERROR] Voice name is required");
+            let msg = "Voice name is required";
+            eprintln!("[Training] ERROR: {}", msg);
+            self.add_training_log(cx, &format!("[ERROR] {}", msg));
+            self.show_error(cx, msg);
             return;
         }
 
         let Some(audio_file) = &self.training_audio_file else {
-            self.add_training_log(cx, "[ERROR] No training audio recorded");
+            let msg = "No training audio available. Please record or upload at least 10 seconds of audio first.";
+            eprintln!("[Training] ERROR: {}", msg);
+            self.add_training_log(cx, &format!("[ERROR] {}", msg));
+            self.show_error(cx, msg);
             return;
         };
 
@@ -3167,7 +3405,10 @@ impl VoiceCloneModal {
         // Start training via manager
         let manager = self.training_manager.as_ref().unwrap();
         if !manager.start_training(voice_id, voice_name, audio_file.clone(), language) {
-            self.add_training_log(cx, "[ERROR] Failed to start training");
+            let msg = "Failed to start training process";
+            eprintln!("[Training] ERROR: {}", msg);
+            self.add_training_log(cx, &format!("[ERROR] {}", msg));
+            self.show_error(cx, msg);
             return;
         }
 
@@ -3329,15 +3570,20 @@ impl VoiceCloneModal {
     }
 
     fn check_gpu_availability(&mut self, cx: &mut Cx) {
-        // Check if CUDA is available
-        let has_gpu = std::process::Command::new("python")
-            .arg("-c")
-            .arg("import torch; print(torch.cuda.is_available())")
-            .output()
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "True")
-            .unwrap_or(false);
+        if !self.gpu_check_done {
+            // First time: run the check and cache the result
+            let has_gpu = std::process::Command::new("python")
+                .arg("-c")
+                .arg("import torch; print(torch.cuda.is_available())")
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "True")
+                .unwrap_or(false);
 
-        if !has_gpu {
+            self.has_gpu = has_gpu;
+            self.gpu_check_done = true;
+        }
+
+        if !self.has_gpu {
             // Show warning
             self.view.view(ids!(
                 modal_container.modal_wrapper.modal_content.body.pro_mode_content.gpu_warning

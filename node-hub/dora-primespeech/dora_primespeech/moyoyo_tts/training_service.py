@@ -37,6 +37,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def get_pretrained_models_dir() -> str:
+    """Resolve the pretrained models base directory.
+
+    Checks (in order):
+    1. PRIMESPEECH_MODEL_DIR env var → <dir>/moyoyo
+    2. Fallback to ~/.dora/models/primespeech/moyoyo
+    """
+    env_dir = os.environ.get("PRIMESPEECH_MODEL_DIR")
+    if env_dir:
+        return os.path.join(os.path.expanduser(env_dir), "moyoyo")
+    return os.path.join(os.path.expanduser("~"), ".dora", "models", "primespeech", "moyoyo")
+
+
 def emit_progress(event_type: str, message: str, data: Optional[Dict] = None):
     """Emit JSON event to stdout for Rust to parse"""
     event = {
@@ -116,7 +129,7 @@ def select_best_reference_audio(asr_list_path: str) -> Tuple[str, str]:
     return best['path'], best['text']
 
 
-def validate_audio_file(audio_file: str, min_duration: float = 180.0, max_duration: float = 600.0) -> float:
+def validate_audio_file(audio_file: str, min_duration: float = 10.0, max_duration: float = 600.0) -> float:
     """Validate audio file exists and meets duration requirements"""
     if not os.path.exists(audio_file):
         raise FileNotFoundError(f"Audio file not found: {audio_file}")
@@ -126,7 +139,7 @@ def validate_audio_file(audio_file: str, min_duration: float = 180.0, max_durati
     if duration < min_duration:
         raise ValueError(
             f"Audio too short: {duration:.1f}s (minimum: {min_duration:.1f}s). "
-            "Please record at least 3 minutes of audio."
+            "Please provide at least 10 seconds of audio."
         )
 
     if duration > max_duration:
@@ -167,7 +180,7 @@ def generate_gpt_config(workspace_dir: str, language: str, gpt_epochs: int = 15,
     model_dir = os.path.join(workspace_dir, "models")
 
     # Determine pretrained model path
-    pretrained_gpt = "moyoyo_tts/pretrained_models/gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt"
+    pretrained_gpt = os.path.join(get_pretrained_models_dir(), "gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt")
     if not os.path.exists(pretrained_gpt):
         emit_progress("WARNING", "Pretrained GPT model not found, training from scratch")
         pretrained_gpt = ""
@@ -226,8 +239,8 @@ def generate_sovits_config(workspace_dir: str, language: str, sovits_epochs: int
     s2_ckpt_dir = os.path.join(workspace_dir, "checkpoints/sovits")
 
     # Determine pretrained model paths
-    pretrained_s2G = "moyoyo_tts/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth"
-    pretrained_s2D = "moyoyo_tts/pretrained_models/gsv-v2final-pretrained/s2D2333k.pth"
+    pretrained_s2G = os.path.join(get_pretrained_models_dir(), "gsv-v2final-pretrained/s2G2333k.pth")
+    pretrained_s2D = os.path.join(get_pretrained_models_dir(), "gsv-v2final-pretrained/s2D2333k.pth")
 
     if not os.path.exists(pretrained_s2G):
         emit_progress("WARNING", "Pretrained SoVITS models not found, training from scratch")
@@ -325,6 +338,12 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
     from moyoyo_tts.text.cleaner import clean_text
     from moyoyo_tts.tools.my_utils import load_audio
 
+    # Set cnhubert model path before loading
+    cnhubert.cnhubert_base_path = os.environ.get(
+        "cnhubert_base_path",
+        os.path.join(get_pretrained_models_dir(), "chinese-hubert-base")
+    )
+
     # Load SSL model
     ssl_model = cnhubert.get_model()
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -355,33 +374,37 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
 
             audio_name = os.path.splitext(os.path.basename(audio_path))[0]
 
-            # Extract semantic tokens
-            audio = load_audio(audio_path, 32000)
-            audio_tensor = torch.from_numpy(audio).unsqueeze(0)
+            # Extract semantic tokens using CNHubert
+            # Load audio at 16kHz (required by HuBERT)
+            audio = load_audio(audio_path, 16000)
+
+            # Use feature_extractor to preprocess (expects numpy), then run model on device
+            input_values = ssl_model.feature_extractor(
+                audio, return_tensors="pt", sampling_rate=16000
+            ).input_values
 
             if is_half:
-                audio_tensor = audio_tensor.half().to(device)
-            else:
-                audio_tensor = audio_tensor.to(device)
+                input_values = input_values.half()
+            input_values = input_values.to(device)
 
             with torch.no_grad():
-                ssl_content = ssl_model.model(audio_tensor)['last_hidden_state']
-                codes = ssl_model.extract_features(ssl_content)
-                codes = codes.cpu().numpy()[0]  # Shape: (seq_len,)
+                ssl_content = ssl_model.model(input_values)["last_hidden_state"]
+                # ssl_content shape: (1, seq_len, 768)
+
+            codes = ssl_content.squeeze(0).cpu().numpy()  # (seq_len, 768)
+
+            # Use mean-pooled feature as semantic token
+            semantic_tokens = codes.mean(axis=1)  # (seq_len,)
 
             # Semantic line format: audio_name \t semantic_tokens
-            semantic_str = ' '.join(map(str, codes.tolist()))
+            semantic_str = ' '.join(f"{v:.4f}" for v in semantic_tokens.tolist())
             semantic_data.append(f"{audio_name}\t{semantic_str}")
 
             # Phoneme line format: audio_name \t language \t text \t phonemes
             norm_text = text.replace("\n", "").strip()
-            if language == "zh":
-                norm_text = clean_text(norm_text, "zh")
-            elif language == "en":
-                norm_text = clean_text(norm_text, "en")
 
-            # Get phonemes
-            phones, word2ph, norm_text = cleaned_text_to_sequence(norm_text, language, "v2")
+            # Get phonemes (clean_text handles normalization internally)
+            phones, word2ph, norm_text = clean_text(norm_text, language, "v2")
             phones_str = ' '.join(map(str, phones))
 
             phoneme_data.append(f"{audio_name}\t{language.upper()}\t{norm_text}\t{phones_str}")
@@ -391,6 +414,8 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
 
         except Exception as e:
             logger.error(f"Failed to process {audio_path}: {e}")
+            logger.error(traceback.format_exc())
+            emit_progress("WARNING", f"Failed to process segment: {e}")
             continue
 
     if not semantic_data:
@@ -427,6 +452,12 @@ def extract_features_for_sovits_training(workspace_dir: str, language: str, asr_
     from moyoyo_tts.text import cleaned_text_to_sequence
     from moyoyo_tts.text.cleaner import clean_text
     from moyoyo_tts.tools.my_utils import load_audio
+
+    # Set cnhubert model path before loading
+    cnhubert.cnhubert_base_path = os.environ.get(
+        "cnhubert_base_path",
+        os.path.join(get_pretrained_models_dir(), "chinese-hubert-base")
+    )
 
     # Load SSL model
     ssl_model = cnhubert.get_model()
@@ -468,31 +499,32 @@ def extract_features_for_sovits_training(workspace_dir: str, language: str, asr_
             shutil.copy2(audio_path, wav32k_path)
 
             # Extract and save SSL features to 4-cnhubert directory
-            audio = load_audio(audio_path, 32000)
-            audio_tensor = torch.from_numpy(audio).unsqueeze(0)
+            # Load audio at 16kHz (required by HuBERT)
+            audio = load_audio(audio_path, 16000)
+
+            # Use feature_extractor to preprocess (expects numpy), then run model on device
+            input_values = ssl_model.feature_extractor(
+                audio, return_tensors="pt", sampling_rate=16000
+            ).input_values
 
             if is_half:
-                audio_tensor = audio_tensor.half().to(device)
-            else:
-                audio_tensor = audio_tensor.to(device)
+                input_values = input_values.half()
+            input_values = input_values.to(device)
 
             with torch.no_grad():
-                ssl_content = ssl_model.model(audio_tensor)['last_hidden_state']
-                ssl_content = ssl_content.transpose(1, 2).cpu()  # Shape: (1, 768, seq_len)
+                ssl_content = ssl_model.model(input_values)["last_hidden_state"]
+                # ssl_content shape: (1, seq_len, 768) → transpose to (1, 768, seq_len)
+                ssl_content = ssl_content.transpose(1, 2)
 
             # Save SSL feature as .pt file
             ssl_path = os.path.join(cnhubert_dir, f"{audio_name}.pt")
-            torch.save(ssl_content, ssl_path)
+            torch.save(ssl_content.cpu(), ssl_path)
 
             # Prepare phoneme data
             norm_text = text.replace("\n", "").strip()
-            if language == "zh":
-                norm_text = clean_text(norm_text, "zh")
-            elif language == "en":
-                norm_text = clean_text(norm_text, "en")
 
-            # Get phonemes
-            phones, word2ph, norm_text = cleaned_text_to_sequence(norm_text, language, "v2")
+            # Get phonemes (clean_text handles normalization internally)
+            phones, word2ph, norm_text = clean_text(norm_text, language, "v2")
             phones_str = ' '.join(map(str, phones))
 
             # Format: audio_name \t language \t text \t phonemes
@@ -503,6 +535,8 @@ def extract_features_for_sovits_training(workspace_dir: str, language: str, asr_
 
         except Exception as e:
             logger.error(f"Failed to process {audio_path}: {e}")
+            logger.error(traceback.format_exc())
+            emit_progress("WARNING", f"Failed to process segment for SoVITS: {e}")
             continue
 
     if not phoneme_data:
