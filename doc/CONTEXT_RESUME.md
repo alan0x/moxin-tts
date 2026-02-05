@@ -3,57 +3,118 @@
 > 本文档用于快速恢复工作上下文，继续Moxin TTS独立应用开发
 
 **文档创建时间**: 2026-02-02
-**最后更新时间**: 2026-02-04
-**文档版本**: 5.0
-**当前阶段**: Pro Mode 文件上传 + 训练 Pipeline 修复（进行中）
+**最后更新时间**: 2026-02-06
+**文档版本**: 7.0
+**当前阶段**: Pro Mode 训练完成，修复自定义音色加载和 UI 刷新问题
 
 ---
 
-## 📋 最新更新 (2026-02-04)
+## 📋 最新更新 (2026-02-06)
 
-### Pro Mode 音频文件上传功能
+### 训练完成与关键 Bug 修复
 
-在 Pro Mode（Few-shot 训练）中添加了"上传音频文件"功能，与录音互斥：
+**训练状态**: GPT + SoVITS 训练全部完成（1小时 CPU 训练）
 
-**修改文件：** `apps/mofa-tts/src/voice_clone_modal.rs` (+290 行)
+**修复的关键问题**:
 
-- UI: 在 `training_recording_section` 的 `record_row` 中添加 `or_label`、`upload_training_btn`、`uploaded_file_info`
-- 事件: 添加 `upload_training_btn` 的 `Hit::FingerUp` 处理
-- 新方法: `open_training_file_dialog()` — 使用 `rfd::FileDialog` 打开文件选择器
-- 新方法: `handle_training_file_selected()` — 读取 WAV、验证时长、重采样 32kHz、保存到 temp 文件
-- 时长限制从 180s（3分钟）放宽到 10s（UI 和 Python 端同步修改）
-- Section 标题改为 "Training Audio"，说明文字更新
+#### 1. Error 20: matplotlib 缺失
+- **问题**: SoVITS 训练需要 matplotlib 绘制频谱图用于 TensorBoard 可视化
+- **修复**: `conda install matplotlib`
 
-### 训练 Pipeline Bug 修复
+#### 2. Error 21: matplotlib API 不兼容 (`tostring_rgb` 已移除)
+- **问题**: matplotlib 3.8+ 移除了 `tostring_rgb()` 方法，代码使用已废弃的 API
+- **修复**: 更新为 `buffer_rgba()` + `np.frombuffer()` 现代 API
+- **文件**:
+  - `node-hub/dora-primespeech/dora_primespeech/moyoyo_tts/utils.py:145` (plot_spectrogram_to_numpy)
+  - `node-hub/dora-primespeech/dora_primespeech/moyoyo_tts/utils.py:176` (plot_alignment_to_numpy)
 
-**修改文件：** `node-hub/dora-primespeech/dora_primespeech/moyoyo_tts/training_service.py`
+#### 3. Error 22: **训练音色未加载自定义模型（严重 bug）**
+- **问题**: 用户训练的自定义音色听起来和 doubao 预制音色完全一样
+- **根本原因**:
+  1. **Rust 代码 bug**: 只识别 `VoiceSource::Custom`（Express Mode），不识别 `VoiceSource::Trained`（Pro Mode）
+  2. **Python 代码缺失**: `VOICE:CUSTOM` 格式硬编码使用 doubao 默认模型权重，没有传递自定义模型路径的机制
+- **修复方案**:
+  1. 新增 `VOICE:TRAINED|<gpt_weights>|<sovits_weights>|<ref_audio>|<prompt_text>|<language>|<text>` 格式
+  2. 更新 Rust 代码识别 Trained voices 并使用新格式（screen_moyoyo.rs:2720-2754）
+  3. 更新 Python 代码解析 VOICE:TRAINED 并加载自定义模型权重（main.py:28, 296-354）
+- **文件**:
+  - `apps/mofa-tts/src/screen_moyoyo.rs:2720-2769`
+  - `node-hub/dora-primespeech/dora_primespeech/main.py:28` (VOICE_TRAINED_PREFIX)
+  - `node-hub/dora-primespeech/dora_primespeech/main.py:296-354` (parsing logic)
 
-- 添加 `get_pretrained_models_dir()` 函数，统一解析模型路径到 `~/.dora/models/primespeech/moyoyo/`
-- 修复 `cnhubert_base_path` 设置（之前未设置导致 NoneType 错误）
-- 修复 pretrained GPT/SoVITS 模型路径（从相对路径改为绝对路径）
-- 修复 SSL 特征提取：改为直接调用 `ssl_model.feature_extractor()` + `ssl_model.model()` 分步处理（之前通过 `get_content()` 传入 CUDA tensor 导致 `Wav2Vec2FeatureExtractor` 失败）
-- 修复 `cleaned_text_to_sequence()` 调用错误：改为正确调用 `clean_text(norm_text, language, "v2")`
-- 移除重复的 `clean_text` 调用（导致 tuple 传入 `.replace()` 报错）
-- 添加更详细的 per-segment 错误日志和 traceback
+#### 4. Voice Library 不刷新（训练完成后新音色不显示）
+- **问题**: Pro Mode 训练完成后保存了音色，但 Voice Library 没有刷新显示
+- **根本原因**: `on_training_completed` 方法保存音色后没有发送 `VoiceCreated` action 通知父组件
+- **修复**:
+  1. 修改调用链传递 `scope` 参数: `poll_training_progress` → `update_training_ui` → `on_training_completed`
+  2. 在 `on_training_completed` 中发送 `VoiceCreated(new_voice)` action
+- **文件**: `apps/mofa-tts/src/voice_clone_modal.rs:1905, 3428, 3442, 3487, 3520, 3566`
 
-**修改文件：** `node-hub/dora-primespeech/dora_primespeech/moyoyo_tts/text/chinese2.py`
+### 文档更新
+- 更新 `doc/DEBUG_LOG.md` 记录 Error 20-22
 
-- 修复 `chinese-roberta-wwm-ext-large` 模型路径，从硬编码相对路径改为 `~/.dora/models/primespeech/moyoyo/` 下
+---
 
-**修改文件：** `node-hub/dora-primespeech/dora_primespeech/moyoyo_tts/tools/slice_audio.py`
+## 📋 上次更新 (2026-02-04 第二轮)
 
-- 添加 `if __name__ == "__main__":` 保护，防止 import 时执行 CLI 入口
+### 训练进度
 
-### Python 依赖修复
+**GPT 训练已成功完成**（15 epochs，CPU 模式约 4 分钟）。SoVITS 训练正在测试中。
 
-- `datasets`: 4.5.0 → 3.6.0（兼容 modelscope 1.33.0）
-- 安装缺失的 `simplejson`、`sortedcontainers`（通过 `pip install modelscope[framework]`）
+### 自上次上下文更新以来修复的问题
 
-### 当前阻塞问题
+完整错误记录见 `doc/DEBUG_LOG.md`。
 
-训练 pipeline 仍有问题需要继续排查：
-- 最后一个错误：`'tuple' object has no attribute 'replace'`（已修复代码，待验证）
-- 训练 pipeline 后续阶段（GPT 训练、SoVITS 训练）尚未测试到
+#### Error 14 修正: SoVITS VQ 量化路径错误
+- **问题**: 语义 token 提取产生浮点值而非整数 codebook 索引
+- **原修复**: 加载 SoVITS VQ 模型做量化，但路径指向 `SoVITS_weights/`（训练输出目录）
+- **二次修复**: 改为先查找 `gsv-v2final-pretrained/s2G2333k.pth`，找不到则 fallback 到 `SoVITS_weights/` 中任意 .pth
+
+#### Error 15: `DictToAttrRecursive` 导入失败
+- **问题**: `from moyoyo_tts.utils import DictToAttrRecursive` 失败，该类不在 `utils.py` 中
+- **修复**: 在 `training_service.py` 模块级别直接定义 `DictToAttrRecursive` 类
+
+#### Error 16: `ZeroDivisionError` in dataset `init_batch`
+- **问题 1**: `phoneme.txt` 列顺序错误（`name|language|text|phones` 而非 `name|phones|word2ph|text`），导致所有数据解析失败
+- **问题 2**: `semantic.tsv` 缺少表头行，`pd.read_csv` 将第一行数据当作列名消耗
+- **修复**: 修正列顺序 + 添加 `item_name\tsemantic_ids` 表头
+
+#### Error 17: `KeyError: 'optimizer'`（GPT config）
+- **问题**: GPT 配置缺少 `optimizer` 节，`t2s_lightning_module.py` 需要 `lr_init`, `lr`, `lr_end`, `warmup_steps`, `decay_steps`
+- **修复**: 添加完整的 `optimizer` 配置节
+
+#### 主动审计发现并修复的 SoVITS 预防性 bug（6 个）
+
+通过全面审查 `s2_train.py`、`data_utils.py`、`process_ckpt.py` 代码，提前发现：
+
+1. **SoVITS `2-name2text.txt` 列顺序错误** — 与 GPT phoneme 相同问题
+2. **`5-wav32k/` 文件名带 `.wav` 扩展名** — `data_utils.py` 的 name intersection 逻辑要求无扩展名
+3. **SoVITS config 缺少 `save_weight_dir`** — `process_ckpt.savee()` 保存模型时会崩溃
+4. **缺少 `logs_s2` 目录** — `s2_train.py` 保存 G/D checkpoint 的目录
+5. **`version` 环境变量未设置** — v2 文本处理不会被激活
+6. **SoVITS checkpoint 查找逻辑错误** — 查找 `G_*.pth`（训练格式）而非 `savee()` 输出（推理格式）
+
+#### Error 18: `sys.modules['utils']` 被 stub 覆盖
+- **问题**: `moyoyo_tts_wrapper_streaming_fix.py` 注册了 `GPTSoVITSFixedUtilsModule` stub 到 `sys.modules['utils']`，只有 `HParams` 属性
+- **修复**: 改为注册真正的 `moyoyo_tts.utils` 模块
+
+#### Error 19: `No module named 'tensorboard'`
+- **修复**: `pip install tensorboard`
+
+### 修改文件汇总
+
+| 文件 | 修改内容 |
+|------|---------|
+| `training_service.py` | DictToAttrRecursive 定义、SoVITS VQ 路径 fallback、phoneme 格式修正、semantic.tsv 表头、optimizer config、save_weight_dir、logs_s2 目录、version env、checkpoint 查找逻辑 |
+| `moyoyo_tts_wrapper_streaming_fix.py` | 修复 `sys.modules['utils']` 从 stub 改为真实模块 |
+| `doc/DEBUG_LOG.md` | 新建，记录全部 19 个错误及解决方案 |
+
+### 当前状态
+
+- GPT 训练: **已成功** (15 epochs, CPU, ~4 min)
+- SoVITS 训练: **测试中**（刚修完导入问题 + tensorboard 依赖）
+- 无 GPU（`GPU available: False`），所有训练使用 CPU
+- 无 pretrained 模型（`gsv-v2final-pretrained/` 不存在），从零训练
 
 ---
 
@@ -421,7 +482,7 @@ Working tree clean ✅
 | TTS生成      | 🚧 待测试    | 核心功能                                      |
 | 语音选择     | 🚧 待测试    | 14+预置语音                                   |
 | 零样本克隆   | ✅ UI完成    | Express模式（5-10秒音频）                     |
-| Few-shot训练 | 🔧 修复中    | Pro模式 UI + 上传完成，训练 pipeline 修复中   |
+| Few-shot训练 | 🔧 修复中    | GPT训练已通过，SoVITS训练测试中               |
 
 ---
 
@@ -749,6 +810,7 @@ cat moxin-tts-shell/IMPLEMENTATION_SUMMARY.md
 | 2026-02-03 | 2.0  | Phase 2-3完成（Shell修复、Few-Shot UI）           | Claude Sonnet 4.5 |
 | 2026-02-03 | 3.0  | Phase 4完成（代码库清理）                         | Claude Sonnet 4.5 |
 | 2026-02-04 | 5.0  | Pro Mode 上传功能 + 训练 pipeline 多处 bug 修复   | Claude Opus 4.5   |
+| 2026-02-04 | 6.0  | GPT 训练通过 + SoVITS 预防性审计修复 + DEBUG_LOG  | Claude Opus 4.5   |
 
 ---
 

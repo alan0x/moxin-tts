@@ -25,6 +25,7 @@ from dora_common.logging import send_log as common_send_log, get_log_level_from_
 # Voice format parsing constants
 VOICE_PREFIX = "VOICE:"
 VOICE_CUSTOM_PREFIX = "VOICE:CUSTOM|"
+VOICE_TRAINED_PREFIX = "VOICE:TRAINED|"
 
 
 def send_log(node, level, message, config_level="INFO"):
@@ -294,8 +295,34 @@ def main():
 
                 if raw_text.startswith(VOICE_PREFIX):
                     try:
-                        # Check for custom voice format
-                        if raw_text.startswith(VOICE_CUSTOM_PREFIX):
+                        # Check for trained voice format (Pro Mode few-shot trained models)
+                        if raw_text.startswith(VOICE_TRAINED_PREFIX):
+                            # Parse trained voice format: VOICE:TRAINED|gpt_weights|sovits_weights|ref_audio|prompt_text|language|text
+                            parts = raw_text[len(VOICE_TRAINED_PREFIX):].split("|", 5)
+                            if len(parts) == 6:
+                                gpt_weights_path, sovits_weights_path, ref_audio_path, prompt_text, lang, text = parts
+                                print(f"DEBUG: Parsed TRAINED VOICE - GPT: '{gpt_weights_path}', SoVITS: '{sovits_weights_path}', ref_audio: '{ref_audio_path}', prompt: '{prompt_text[:30]}...', lang: '{lang}'", file=sys.stderr, flush=True)
+                                send_log(node, "INFO", f"Using trained voice with custom models", config.LOG_LEVEL)
+                                send_log(node, "INFO", f"  GPT weights: {gpt_weights_path}", config.LOG_LEVEL)
+                                send_log(node, "INFO", f"  SoVITS weights: {sovits_weights_path}", config.LOG_LEVEL)
+                                send_log(node, "INFO", f"  Reference audio: {ref_audio_path}", config.LOG_LEVEL)
+
+                                # Create trained voice config with custom model weights
+                                # This enables few-shot voice cloning with trained GPT and SoVITS models
+                                custom_voice_config = {
+                                    "gpt_weights": gpt_weights_path,  # Custom trained GPT weights
+                                    "sovits_weights": sovits_weights_path,  # Custom trained SoVITS weights
+                                    "reference_audio": ref_audio_path,  # Training reference audio (absolute path)
+                                    "prompt_text": prompt_text,  # Training prompt text
+                                    "text_lang": lang if lang in ["zh", "en", "ja", "auto"] else "auto",
+                                    "prompt_lang": lang if lang in ["zh", "en", "ja", "auto"] else "auto",
+                                    "speed_factor": 1.1,
+                                }
+                                current_voice_name = "TRAINED"
+                            else:
+                                send_log(node, "WARNING", f"Invalid TRAINED voice format (expected 6 parts), got {len(parts)}: {raw_text[:100]}", config.LOG_LEVEL)
+                        # Check for custom voice format (Express Mode zero-shot cloning)
+                        elif raw_text.startswith(VOICE_CUSTOM_PREFIX):
                             # Parse custom voice format: VOICE:CUSTOM|ref_audio|prompt_text|language|text
                             # Remove prefix robustly using len() instead of hardcoded index
                             parts = raw_text[len(VOICE_CUSTOM_PREFIX):].split("|", 3)

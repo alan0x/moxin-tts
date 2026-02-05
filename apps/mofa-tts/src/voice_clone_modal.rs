@@ -1902,7 +1902,7 @@ impl Widget for VoiceCloneModal {
             }
 
             // Poll training progress (should be called on every frame)
-            self.poll_training_progress(cx);
+            self.poll_training_progress(cx, scope);
         }
 
         // Extract actions - keep for any remaining action-based handling
@@ -3425,7 +3425,7 @@ impl VoiceCloneModal {
         }
     }
 
-    fn poll_training_progress(&mut self, cx: &mut Cx) {
+    fn poll_training_progress(&mut self, cx: &mut Cx, scope: &mut Scope) {
         let Some(ref manager) = self.training_manager else {
             return;
         };
@@ -3435,11 +3435,11 @@ impl VoiceCloneModal {
         // Only update if changed
         if progress.last_updated > self.training_progress.last_updated {
             self.training_progress = progress.clone();
-            self.update_training_ui(cx, &progress);
+            self.update_training_ui(cx, scope, &progress);
         }
     }
 
-    fn update_training_ui(&mut self, cx: &mut Cx, progress: &TrainingProgress) {
+    fn update_training_ui(&mut self, cx: &mut Cx, scope: &mut Scope, progress: &TrainingProgress) {
         // Update stage label
         self.view.label(ids!(
             modal_container.modal_wrapper.modal_content.body.pro_mode_content
@@ -3486,6 +3486,7 @@ impl VoiceCloneModal {
             } => {
                 self.on_training_completed(
                     cx,
+                    scope,
                     gpt_weights.clone(),
                     sovits_weights.clone(),
                     reference_audio.clone(),
@@ -3520,6 +3521,7 @@ impl VoiceCloneModal {
     fn on_training_completed(
         &mut self,
         cx: &mut Cx,
+        scope: &mut Scope,
         gpt_weights: PathBuf,
         sovits_weights: PathBuf,
         reference_audio: PathBuf,
@@ -3559,6 +3561,13 @@ impl VoiceCloneModal {
         }
 
         self.add_training_log(cx, "[SUCCESS] Voice saved successfully!");
+
+        // Emit action to notify parent screen to refresh voice library
+        cx.widget_action(
+            self.widget_uid(),
+            &scope.path,
+            VoiceCloneModalAction::VoiceCreated(new_voice),
+        );
 
         // Show success message
         self.view.button(ids!(

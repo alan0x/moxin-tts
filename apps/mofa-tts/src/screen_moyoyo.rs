@@ -2720,9 +2720,40 @@ impl TTSScreen {
         // For PrimeSpeech, encode voice selection in prompt using VOICE: prefix
         // The dora-primespeech node will parse this format
         // For custom voices, use extended format: VOICE:CUSTOM|<ref_audio_path>|<prompt_text>|<language>|<text>
+        // For trained voices, use: VOICE:TRAINED|<gpt_weights>|<sovits_weights>|<ref_audio>|<prompt_text>|<language>|<text>
         let prompt = if let Some(voice) = voice_info {
-            if voice.source == crate::voice_data::VoiceSource::Custom {
-                // Custom voice - need to send reference audio path and prompt text
+            if voice.source == crate::voice_data::VoiceSource::Trained {
+                // Trained voice (Pro Mode) - need to send model weights, reference audio, and prompt text
+                if let (Some(gpt_weights), Some(sovits_weights), Some(ref_audio), Some(prompt_text)) =
+                    (&voice.gpt_weights, &voice.sovits_weights, &voice.reference_audio_path, &voice.prompt_text)
+                {
+                    self.add_log(
+                        cx,
+                        &format!("[INFO] [tts] Using trained voice with custom models: {}", voice.name),
+                    );
+                    self.add_log(
+                        cx,
+                        &format!("[INFO] [tts] GPT: {}", gpt_weights),
+                    );
+                    self.add_log(
+                        cx,
+                        &format!("[INFO] [tts] SoVITS: {}", sovits_weights),
+                    );
+
+                    // VOICE:TRAINED|<gpt_weights>|<sovits_weights>|<ref_audio>|<prompt_text>|<language>|<text>
+                    format!(
+                        "VOICE:TRAINED|{}|{}|{}|{}|{}|{}",
+                        gpt_weights, sovits_weights, ref_audio, prompt_text, voice.language, text
+                    )
+                } else {
+                    self.add_log(
+                        cx,
+                        "[WARN] [tts] Trained voice missing model weights or ref audio, using default",
+                    );
+                    format!("VOICE:Doubao|{}", text)
+                }
+            } else if voice.source == crate::voice_data::VoiceSource::Custom {
+                // Custom voice (Express Mode) - need to send reference audio path and prompt text
                 if let (Some(ref_audio), Some(prompt_text)) =
                     (&voice.reference_audio_path, &voice.prompt_text)
                 {
@@ -2736,7 +2767,7 @@ impl TTSScreen {
                         &format!("[INFO] [tts] Custom voice ref audio: {}", ref_audio_path),
                     );
 
-                    // Extended format for custom voices
+                    // Extended format for custom voices (zero-shot)
                     // VOICE:CUSTOM|<ref_audio_path>|<prompt_text>|<language>|<text_to_speak>
                     format!(
                         "VOICE:CUSTOM|{}|{}|{}|{}",

@@ -37,6 +37,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class DictToAttrRecursive(dict):
+    def __init__(self, input_dict):
+        super().__init__(input_dict)
+        for key, value in input_dict.items():
+            if isinstance(value, dict):
+                value = DictToAttrRecursive(value)
+            self[key] = value
+            setattr(self, key, value)
+
+    def __getattr__(self, item):
+        try:
+            return self[item]
+        except KeyError:
+            raise AttributeError(f"Attribute {item} not found")
+
+    def __setattr__(self, key, value):
+        if isinstance(value, dict):
+            value = DictToAttrRecursive(value)
+        super(DictToAttrRecursive, self).__setitem__(key, value)
+        super().__setattr__(key, value)
+
+    def __delattr__(self, item):
+        try:
+            del self[item]
+        except KeyError:
+            raise AttributeError(f"Attribute {item} not found")
+
+
 def get_pretrained_models_dir() -> str:
     """Resolve the pretrained models base directory.
 
@@ -159,6 +187,7 @@ def create_directory_structure(workspace_dir: str):
         "checkpoints/sovits",
         "models",
         "logs",
+        "logs_s2",      # SoVITS checkpoint directory (s2_train.py saves G_/D_ here)
         "3-bert",       # BERT features directory (for GPT training)
         "4-cnhubert",   # SSL features directory (for SoVITS training)
         "5-wav32k"      # 32kHz audio directory (for SoVITS training)
@@ -211,10 +240,22 @@ def generate_gpt_config(workspace_dir: str, language: str, gpt_epochs: int = 15,
         },
 
         "model": {
-            "hidden_size": 1024,
-            "num_layers": 12,
-            "num_heads": 16,
-            "dropout": 0.1
+            "hidden_dim": 512,
+            "embedding_dim": 512,
+            "head": 8,
+            "n_layer": 12,
+            "vocab_size": 1025,
+            "phoneme_vocab_size": 512,
+            "EOS": 1024,
+            "dropout": 0.0
+        },
+
+        "optimizer": {
+            "lr": 0.002,
+            "lr_init": 1e-6,
+            "lr_end": 0.002,
+            "warmup_steps": 2000,
+            "decay_steps": 40000
         },
 
         "pretrained_s1": pretrained_gpt if pretrained_gpt else None
@@ -309,6 +350,7 @@ def generate_sovits_config(workspace_dir: str, language: str, sovits_epochs: int
             "freeze_quantizer": True
         },
         "s2_ckpt_dir": s2_ckpt_dir,
+        "save_weight_dir": os.path.join(workspace_dir, "models"),
         "content_module": "cnhubert",
         "name": "sovits_model"
     }
@@ -337,6 +379,8 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
     from moyoyo_tts.text import cleaned_text_to_sequence
     from moyoyo_tts.text.cleaner import clean_text
     from moyoyo_tts.tools.my_utils import load_audio
+    from moyoyo_tts.module.models import SynthesizerTrn
+    # DictToAttrRecursive is defined at module level in this file
 
     # Set cnhubert model path before loading
     cnhubert.cnhubert_base_path = os.environ.get(
@@ -344,7 +388,7 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
         os.path.join(get_pretrained_models_dir(), "chinese-hubert-base")
     )
 
-    # Load SSL model
+    # Load SSL model (HuBERT)
     ssl_model = cnhubert.get_model()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     is_half = torch.cuda.is_available()
@@ -353,6 +397,54 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
         ssl_model = ssl_model.half().to(device)
     else:
         ssl_model = ssl_model.to(device)
+
+    # Load a SoVITS model for VQ quantization (extract_latent)
+    # The VQ codebook is shared across all fine-tuned models, so any will work.
+    # Try pretrained first, then fall back to any existing SoVITS weights.
+    models_dir = get_pretrained_models_dir()
+    sovits_path = os.path.join(models_dir, "gsv-v2final-pretrained", "s2G2333k.pth")
+    if not os.path.exists(sovits_path):
+        sovits_weights_dir = os.path.join(models_dir, "SoVITS_weights")
+        if os.path.isdir(sovits_weights_dir):
+            sovits_files = [f for f in os.listdir(sovits_weights_dir) if f.endswith('.pth')]
+            if sovits_files:
+                sovits_path = os.path.join(sovits_weights_dir, sovits_files[0])
+            else:
+                raise FileNotFoundError(
+                    f"No SoVITS model found. Checked:\n"
+                    f"  1. {os.path.join(models_dir, 'gsv-v2final-pretrained', 's2G2333k.pth')}\n"
+                    f"  2. {sovits_weights_dir}/*.pth"
+                )
+        else:
+            raise FileNotFoundError(
+                f"No SoVITS model found. Checked:\n"
+                f"  1. {os.path.join(models_dir, 'gsv-v2final-pretrained', 's2G2333k.pth')}\n"
+                f"  2. {sovits_weights_dir} (directory not found)"
+            )
+    emit_progress("INFO", f"Loading SoVITS quantizer from {sovits_path}")
+
+    dict_s2 = torch.load(sovits_path, map_location="cpu")
+    hps = dict_s2["config"]
+    hps = DictToAttrRecursive(hps)
+    hps.model.semantic_frame_rate = "25hz"
+    if dict_s2['weight']['enc_p.text_embedding.weight'].shape[0] == 322:
+        hps.model.version = "v1"
+    else:
+        hps.model.version = "v2"
+
+    vq_model = SynthesizerTrn(
+        hps.data.filter_length // 2 + 1,
+        hps.train.segment_size // hps.data.hop_length,
+        n_speakers=hps.data.n_speakers,
+        **hps.model
+    )
+    del vq_model.enc_q
+    if is_half:
+        vq_model = vq_model.half().to(device)
+    else:
+        vq_model = vq_model.to(device)
+    vq_model.eval()
+    vq_model.load_state_dict(dict_s2["weight"], strict=False)
 
     # Read ASR results
     with open(asr_list_path, 'r', encoding='utf-8') as f:
@@ -374,11 +466,11 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
 
             audio_name = os.path.splitext(os.path.basename(audio_path))[0]
 
-            # Extract semantic tokens using CNHubert
-            # Load audio at 16kHz (required by HuBERT)
+            # Extract semantic tokens:
+            # 1. Load audio at 16kHz for HuBERT
             audio = load_audio(audio_path, 16000)
 
-            # Use feature_extractor to preprocess (expects numpy), then run model on device
+            # 2. Run through HuBERT feature_extractor + model
             input_values = ssl_model.feature_extractor(
                 audio, return_tensors="pt", sampling_rate=16000
             ).input_values
@@ -389,25 +481,28 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
 
             with torch.no_grad():
                 ssl_content = ssl_model.model(input_values)["last_hidden_state"]
-                # ssl_content shape: (1, seq_len, 768)
+                # ssl_content shape: (1, seq_len, 768) → transpose to (1, 768, seq_len)
+                ssl_content = ssl_content.transpose(1, 2)
 
-            codes = ssl_content.squeeze(0).cpu().numpy()  # (seq_len, 768)
+                # 3. Quantize through SoVITS VQ model to get integer codebook indices
+                codes = vq_model.extract_latent(ssl_content)
+                # codes shape: (1, n_codebook, seq_len) — use first codebook
+                semantic_ids = codes[0, 0].cpu().numpy().astype(int)  # (seq_len,)
 
-            # Use mean-pooled feature as semantic token
-            semantic_tokens = codes.mean(axis=1)  # (seq_len,)
-
-            # Semantic line format: audio_name \t semantic_tokens
-            semantic_str = ' '.join(f"{v:.4f}" for v in semantic_tokens.tolist())
+            # Semantic line format: audio_name \t space-separated integer token IDs
+            semantic_str = ' '.join(str(idx) for idx in semantic_ids.tolist())
             semantic_data.append(f"{audio_name}\t{semantic_str}")
 
-            # Phoneme line format: audio_name \t language \t text \t phonemes
+            # Phoneme line format: audio_name \t phonemes \t word2ph \t text
+            # (must match dataset.py: phoneme, word2ph, text = phoneme_data[item_name])
             norm_text = text.replace("\n", "").strip()
 
             # Get phonemes (clean_text handles normalization internally)
             phones, word2ph, norm_text = clean_text(norm_text, language, "v2")
             phones_str = ' '.join(map(str, phones))
+            word2ph_str = ' '.join(map(str, word2ph))
 
-            phoneme_data.append(f"{audio_name}\t{language.upper()}\t{norm_text}\t{phones_str}")
+            phoneme_data.append(f"{audio_name}\t{phones_str}\t{word2ph_str}\t{norm_text}")
 
             if (idx + 1) % 10 == 0:
                 emit_progress("INFO", f"Extracted features {idx + 1}/{len(asr_lines)}")
@@ -422,9 +517,11 @@ def extract_features_for_gpt_training(workspace_dir: str, language: str, asr_lis
         raise ValueError("No valid training data generated")
 
     # Save semantic features (TSV format for GPT training)
+    # Header row is required: pd.read_csv treats first line as column names
     semantic_path = os.path.join(workspace_dir, "processed/features/semantic.tsv")
     os.makedirs(os.path.dirname(semantic_path), exist_ok=True)
     with open(semantic_path, 'w', encoding='utf-8') as f:
+        f.write("item_name\tsemantic_ids\n")
         f.write('\n'.join(semantic_data))
 
     # Save phoneme features (TXT format for GPT training)
@@ -495,7 +592,9 @@ def extract_features_for_sovits_training(workspace_dir: str, language: str, asr_
             audio_name = os.path.splitext(os.path.basename(audio_path))[0]
 
             # Copy audio to 5-wav32k directory
-            wav32k_path = os.path.join(wav32k_dir, f"{audio_name}.wav")
+            # File must be saved WITHOUT extension: data_utils.py intersects
+            # names5 (raw filenames) with phoneme_data keys (no extension)
+            wav32k_path = os.path.join(wav32k_dir, audio_name)
             shutil.copy2(audio_path, wav32k_path)
 
             # Extract and save SSL features to 4-cnhubert directory
@@ -526,9 +625,11 @@ def extract_features_for_sovits_training(workspace_dir: str, language: str, asr_
             # Get phonemes (clean_text handles normalization internally)
             phones, word2ph, norm_text = clean_text(norm_text, language, "v2")
             phones_str = ' '.join(map(str, phones))
+            word2ph_str = ' '.join(map(str, word2ph))
 
-            # Format: audio_name \t language \t text \t phonemes
-            phoneme_data.append(f"{audio_name}\t{language.upper()}\t{norm_text}\t{phones_str}")
+            # Format: audio_name \t phonemes \t word2ph \t text
+            # (must match data_utils.py: phoneme_data[name] = [tmp[1]] where tmp[1] = phonemes)
+            phoneme_data.append(f"{audio_name}\t{phones_str}\t{word2ph_str}\t{norm_text}")
 
             if (idx + 1) % 10 == 0:
                 emit_progress("INFO", f"Processed {idx + 1}/{len(asr_lines)} files for SoVITS")
@@ -579,6 +680,9 @@ def run_training_pipeline(request: Dict):
     gpt_epochs = params.get("gpt_epochs", 15)
     sovits_epochs = params.get("sovits_epochs", 20)
     batch_size = params.get("batch_size", 4)
+
+    # Set version env var for v2 text processing (used by dataset.py, data_utils.py)
+    os.environ["version"] = "v2"
 
     emit_progress("STAGE", "Preparing workspace", {"current": 1, "total": 7})
 
@@ -743,25 +847,17 @@ def run_training_pipeline(request: Dict):
             sys.argv = original_argv
 
         # Find final SoVITS checkpoint
-        sovits_logs_dir = os.path.join(workspace_dir, "checkpoints/sovits/logs_s2")
-        if not os.path.exists(sovits_logs_dir):
-            # Try alternate location
-            sovits_logs_dir = os.path.join(workspace_dir, "logs_s2")
+        # savee() saves inference-ready weights to models/ as "sovits_model_eE_sS.pth"
+        # (format: {"weight": ..., "config": ...})
+        # G_*.pth in logs_s2/ are training checkpoints with different format
+        sovits_weights = [f for f in os.listdir(model_dir) if f.startswith("sovits_model") and f.endswith(".pth")]
 
-        sovits_checkpoints = []
-        if os.path.exists(sovits_logs_dir):
-            sovits_checkpoints = [f for f in os.listdir(sovits_logs_dir) if f.startswith("G_") and f.endswith(".pth")]
+        if not sovits_weights:
+            raise FileNotFoundError("SoVITS training completed but no checkpoint found in models/")
 
-        if not sovits_checkpoints:
-            raise FileNotFoundError("SoVITS training completed but no checkpoint found")
-
-        # Get latest checkpoint
-        sovits_checkpoints.sort()
-        sovits_ckpt_path = os.path.join(sovits_logs_dir, sovits_checkpoints[-1])
-
-        # Copy to final models directory
-        sovits_final_path = os.path.join(model_dir, "sovits_final.pth")
-        shutil.copy2(sovits_ckpt_path, sovits_final_path)
+        # Get latest by name (sorted by epoch/step)
+        sovits_weights.sort()
+        sovits_final_path = os.path.join(model_dir, sovits_weights[-1])
 
         # Rename GPT checkpoint to standard name
         gpt_final_renamed = os.path.join(model_dir, "gpt_final.ckpt")

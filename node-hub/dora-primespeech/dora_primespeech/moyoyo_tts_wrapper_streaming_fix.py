@@ -75,11 +75,8 @@ try:
     from moyoyo_tts.utils import HParams
 
     if "utils" not in sys.modules:
-        class GPTSoVITSFixedUtilsModule:
-            HParams = HParams
-
-
-        sys.modules['utils'] = GPTSoVITSFixedUtilsModule
+        import moyoyo_tts.utils as _moyoyo_utils
+        sys.modules['utils'] = _moyoyo_utils
 
     MOYOYO_AVAILABLE = True
     logger.info("MoYoYo TTS successfully imported")
