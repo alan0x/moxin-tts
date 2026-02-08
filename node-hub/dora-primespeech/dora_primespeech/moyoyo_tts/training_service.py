@@ -211,9 +211,13 @@ def generate_gpt_config(workspace_dir: str, language: str, gpt_epochs: int = 15,
     # Determine pretrained model path
     pretrained_gpt = os.path.join(get_pretrained_models_dir(), "gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt")
     if not os.path.exists(pretrained_gpt):
-        emit_progress("WARNING", "Pretrained GPT model not found, training from scratch")
-        pretrained_gpt = ""
+        emit_progress("ERROR", "Pretrained GPT model not found! Few-shot training requires pretrained model.")
+        emit_progress("ERROR", f"Please download s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt from HuggingFace")
+        emit_progress("ERROR", f"and place it at: {pretrained_gpt}")
+        raise FileNotFoundError(f"Pretrained GPT model not found: {pretrained_gpt}")
 
+    # Model architecture must match the pretrained model (GPT-SoVITS v2)
+    # These values are from the official pretrained model config
     config = {
         "output_dir": output_dir,
         "train_semantic_path": semantic_path,
@@ -239,13 +243,14 @@ def generate_gpt_config(workspace_dir: str, language: str, gpt_epochs: int = 15,
             "precision": "bf16-mixed" if torch.cuda.is_available() else "32"
         },
 
+        # Model architecture matching pretrained GPT-SoVITS v2 model
         "model": {
             "hidden_dim": 512,
             "embedding_dim": 512,
-            "head": 8,
-            "n_layer": 12,
+            "head": 16,              # Must match pretrained (was 8)
+            "n_layer": 24,           # Must match pretrained (was 12)
             "vocab_size": 1025,
-            "phoneme_vocab_size": 512,
+            "phoneme_vocab_size": 732,  # Must match pretrained (was 512)
             "EOS": 1024,
             "dropout": 0.0
         },
@@ -258,7 +263,7 @@ def generate_gpt_config(workspace_dir: str, language: str, gpt_epochs: int = 15,
             "decay_steps": 40000
         },
 
-        "pretrained_s1": pretrained_gpt if pretrained_gpt else None
+        "pretrained_s1": pretrained_gpt
     }
 
     config_path = os.path.join(workspace_dir, "config_gpt.yaml")

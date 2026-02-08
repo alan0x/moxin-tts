@@ -4,18 +4,134 @@
 
 **文档创建时间**: 2026-02-02
 **最后更新时间**: 2026-02-08
-**文档版本**: 8.0
-**当前阶段**: 发现 Pro Mode Few-Shot 训练根本性问题，建议使用 Express Mode
+**文档版本**: 10.0
+**当前阶段**: ✅ Pro Mode Few-Shot 训练问题已彻底解决并验证
 
 ---
 
 ## 📋 最新更新 (2026-02-08)
 
-### ⚠️ Pro Mode Few-Shot 训练根本性问题
+### ✅ Pro Mode Few-Shot 训练问题已彻底解决
 
-**问题描述**: Pro Mode 训练的自定义音色只能生成 ~1.5 秒的空白/静音音频，无论训练数据量、epoch 数、或配置如何调整。
+**问题**: Pro Mode 训练的自定义音色只能生成 ~1.5 秒的空白/静音音频。
 
-#### 调查过程
+**状态**: ✅ **已解决并验证成功** - 重新训练后可正常生成完整音频。
+
+#### 根本原因分析
+
+通过对比内置模型 (doubao) 和训练模型 (0208-2) 的 checkpoint 文件，发现两个关键问题：
+
+**问题 1: 缺少 GPT 预训练模型**
+
+之前只下载了 SoVITS 预训练模型，但**没有下载 GPT 预训练模型**：
+
+| 文件 | 状态 |
+|------|------|
+| s2D2333k.pth (SoVITS) | ✅ 已下载 |
+| s2G2333k.pth (SoVITS) | ✅ 已下载 |
+| s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt (GPT) | ❌ **缺失** |
+
+**问题 2: 训练代码模型架构配置错误**
+
+`training_service.py` 硬编码的模型架构与 GPT-SoVITS v2 预训练模型不匹配：
+
+| 配置项 | 内置/预训练模型 | 训练代码 (旧) | 训练代码 (新) |
+|--------|-----------------|---------------|---------------|
+| n_layer | 24 | 12 ❌ | 24 ✅ |
+| head | 16 | 8 ❌ | 16 ✅ |
+| phoneme_vocab_size | 732 | 512 ❌ | 732 ✅ |
+| Weight keys | 295 | 151 ❌ | 295 ✅ |
+| 文件大小 | 148 MB | 75 MB ❌ | 148 MB ✅ |
+
+#### 问题验证
+
+使用 Python 脚本分析 checkpoint 文件：
+
+```python
+# 内置模型: 都是 FP16，295 个权重，148 MB
+builtin['weight'] dtype=torch.float16
+Weight keys count: 295
+ar_text_embedding shape: [732, 512]
+
+# 训练模型: 也是 FP16，但只有 151 个权重，75 MB
+trained['weight'] dtype=torch.float16
+Weight keys count: 151
+ar_text_embedding shape: [512, 512]
+```
+
+结论：**Sonnet 4.5 之前的 FP16 精度假设是错误的**（两个模型都是 FP16），真正问题是模型架构不匹配。
+
+#### 修复方案
+
+**1. 代码修复 (已完成)**
+
+修改 `node-hub/dora-primespeech/dora_primespeech/moyoyo_tts/training_service.py:211-262`:
+
+```python
+# 修改前：错误的模型架构
+"model": {
+    "head": 8,           # 错误
+    "n_layer": 12,       # 错误
+    "phoneme_vocab_size": 512,  # 错误
+}
+
+# 修改后：匹配预训练模型的架构
+"model": {
+    "head": 16,              # Must match pretrained
+    "n_layer": 24,           # Must match pretrained
+    "phoneme_vocab_size": 732,  # Must match pretrained
+}
+```
+
+同时添加了严格的预训练模型检查，如果 GPT 预训练模型不存在会抛出错误而不是静默降级。
+
+**2. 下载 GPT 预训练模型 (✅ 已完成)**
+
+已下载 `s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt` (155 MB):
+- 下载地址: https://huggingface.co/lj1995/GPT-SoVITS/tree/main/gsv-v2final-pretrained
+- 放置位置: `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\`
+
+**3. 重新训练验证 (✅ 已完成)**
+
+使用 Pro Mode 重新训练后：
+- ✅ 训练成功完成（使用正确的预训练模型和架构配置）
+- ✅ TTS 生成音频成功（不再是 1.5 秒空白音频）
+- ✅ 问题彻底解决
+
+#### 修改文件汇总
+
+| 文件 | 修改内容 |
+|------|----------|
+| `training_service.py:211-262` | 修正 GPT 模型架构配置 (head: 8→16, n_layer: 12→24, phoneme_vocab_size: 512→732)，添加预训练模型强制检查 |
+| `doc/CONTEXT_RESUME.md` | 更新根本原因分析和解决方案 |
+
+#### 预训练模型目录最终状态
+
+```
+C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\
+├── s2D2333k.pth (93 MB) ✅ SoVITS 判别器
+├── s2G2333k.pth (106 MB) ✅ SoVITS 生成器
+└── s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt (155 MB) ✅ GPT
+```
+
+#### 问题总结
+
+Pro Mode Few-Shot 训练的根本问题是：
+1. **缺少 GPT 预训练模型** - 导致训练从头开始
+2. **训练代码架构配置错误** - 使用了错误的小模型架构（12 层 8 头 vs 24 层 16 头）
+
+修复后的训练流程：
+- ✅ 预训练模型正确加载
+- ✅ 使用匹配的模型架构（24 层，16 头，732 词汇表）
+- ✅ 训练后的模型大小正确（~149 MB vs 之前的 ~76 MB）
+- ✅ TTS 生成正常音频
+
+---
+
+### 历史调查过程 (Error 23-26)
+
+<details>
+<summary>点击展开调查过程详情</summary>
 
 **初始症状** (2026-02-08 早):
 - 用户完成 1 小时 GPT+SoVITS 训练后，训练的音色效果与预制 doubao 音色一模一样
@@ -27,74 +143,24 @@
   - 添加 `VOICE:TRAINED|<gpt>|<sovits>|<ref>|<prompt>|<lang>|<text>` 协议
   - 更新 `screen.rs:2483-2514` 支持 Trained voices
   - 更新 `main.py:28, 298-323` 解析并加载自定义模型权重
-- **结果**: 模型路径正确传递，但音频依然只有 1.5 秒
 
-**Error 24: 训练数据不足 (已发现)**:
+**Error 24: 训练数据不足**:
 - 第一次训练只用了 18.7 秒音频（要求 3-10 分钟），导致只切出 3 个样本
 - 重新用 5 分钟音频训练，切出 65 个样本
-- **结果**: 音频长度依然只有 1.5 秒
 
-**Error 25: 使用早期 checkpoint (已修复)**:
+**Error 25: 使用早期 checkpoint**:
 - UI 自动保存配置时使用 `sovits_model_e5_s160.pth` (epoch 5)
 - 手动更新为最终 checkpoint `sovits_model_e20_s640.pth` (epoch 20)
-- **结果**: 音频长度依然只有 1.5 秒
 
-**Error 26: 缺少预训练基础模型 (已修复)**:
-- **发现**: 训练配置显示 `pretrained_s2G: ""`, `pretrained_s2D: ""` (空)
-- **根本原因**: 缺少 GPT-SoVITS v2 预训练模型:
-  - `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2G2333k.pth`
-  - `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2D2333k.pth`
-- **修复**: 从 HuggingFace 下载并放置预训练模型 (s2G: 106MB, s2D: 93MB)
-- **第三次训练**: 使用预训练模型重新训练（20 epochs, 65 样本, 5 分钟音频）
-- **结果**: 配置正确（`pretrained_s2G` 和 `pretrained_s2D` 已填充），但音频依然只有 1.5 秒
+**Error 26: 缺少 SoVITS 预训练模型 (已修复)**:
+- 从 HuggingFace 下载 s2G2333k.pth 和 s2D2333k.pth
 
-#### 最终诊断
+**Error 27: 缺少 GPT 预训练模型 + 模型架构不匹配 (本次修复)**:
+- 缺少 `s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt`
+- `training_service.py` 硬编码了错误的小模型架构
+- 导致训练从头开始，且模型太小无法学习
 
-**所有尝试方案**:
-1. ✗ 修复 VOICE:TRAINED 协议支持
-2. ✗ 使用充足训练数据（5 分钟, 65 样本）
-3. ✗ 使用最终 checkpoint (epoch 20 vs epoch 5)
-4. ✗ 添加预训练基础模型（s2G2333k.pth + s2D2333k.pth）
-5. ✗ 多次重新训练验证
-
-**一致的症状**:
-- 预制 doubao 音色：正常生成 8.54 秒音频（46 字符文本）
-- 训练的音色：只生成 1.44-1.50 秒音频（46 字符文本）
-- 音频长度: ~46,000-48,000 samples (恰好约 1000 samples/字符)
-- 推断: 模型未真正学习语音合成，只生成最小化/占位符输出
-
-**技术分析**:
-- 训练确实在运行（日志显示 GPT 15 epochs, SoVITS 20 epochs）
-- 检查点文件大小相似但 MD5 哈希不同（说明权重有更新）
-- 配置正确（预训练模型已加载，训练参数合理）
-- 推理代码正常（doubao 工作正常，说明 TTS 引擎本身没问题）
-
-**结论**:
-存在 **GPT-SoVITS Few-Shot 训练/推理的根本性问题**，超出配置层面：
-- 可能是训练算法实现 bug
-- 可能是推理与训练不兼容
-- 可能是特定环境/依赖问题
-- 需要修改核心训练/推理代码才能解决
-
-#### 用户建议
-
-**推荐方案**:
-1. **使用 Express Mode（零样本克隆）**: 该功能工作正常，虽然效果不如 Few-Shot，但可用
-2. **向 mofa-studio 团队报告**: https://github.com/moxin-org/mofa-studio/issues
-   - 说明 Pro Mode Few-Shot 训练的模型无法正常合成
-   - 提供训练日志、配置和调查结果
-3. **尝试官方 GPT-SoVITS WebUI**:
-   - 下载官方 GPT-SoVITS 项目
-   - 用相同数据测试，确认是代码库问题还是通用问题
-
-**修改文件**:
-- `apps/mofa-tts/src/screen.rs:2483-2514` - VOICE:TRAINED 支持
-- `node-hub/dora-primespeech/dora_primespeech/main.py:28, 298-323` - VOICE:TRAINED 解析
-- `C:\Users\YY\.dora\primespeech\custom_voices.json` - 多次更新 checkpoint 路径
-
-**新增文件**:
-- `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2G2333k.pth` (106MB)
-- `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2D2333k.pth` (93MB)
+</details>
 
 ---
 
@@ -900,6 +966,8 @@ cat moxin-tts-shell/IMPLEMENTATION_SUMMARY.md
 | 2026-02-03 | 3.0  | Phase 4完成（代码库清理）                         | Claude Sonnet 4.5 |
 | 2026-02-04 | 5.0  | Pro Mode 上传功能 + 训练 pipeline 多处 bug 修复   | Claude Opus 4.5   |
 | 2026-02-04 | 6.0  | GPT 训练通过 + SoVITS 预防性审计修复 + DEBUG_LOG  | Claude Opus 4.5   |
+| 2026-02-08 | 8.0  | Error 23-26 调查（VOICE:TRAINED、预训练模型）    | Claude Sonnet 4.5 & Opus 4.5 |
+| 2026-02-08 | 10.0 | ✅ Pro Mode 根本问题解决（GPT预训练模型+架构修复） | Claude Opus 4.5 & Sonnet 4.5 |
 
 ---
 
