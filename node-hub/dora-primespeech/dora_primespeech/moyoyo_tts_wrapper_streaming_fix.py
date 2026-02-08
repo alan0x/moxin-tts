@@ -381,8 +381,8 @@ class StreamingMoYoYoTTSWrapper:
                 if not text_chunk.strip():
                     continue
                 
-                self.log("DEBUG", f"Processing chunk {chunk_idx + 1}: {text_chunk[:30]}...")
-                
+                self.log("INFO", f"[STREAM] Processing chunk {chunk_idx + 1}: {text_chunk[:30]}...")
+
                 # Prepare inputs without MoYoYo's broken streaming
                 inputs = {
                     "text": text_chunk,
@@ -394,11 +394,19 @@ class StreamingMoYoYoTTSWrapper:
                     "return_fragment": False,  # Don't use MoYoYo's broken streaming
                     **self.optimization_config
                 }
-                
+
                 # Generate audio for this text chunk
-                for result in self.tts.run(inputs):
-                    sample_rate, chunk_audio = result
-                    break  # Only yields once when return_fragment=False
+                self.log("INFO", f"[STREAM] Calling tts.run() for chunk {chunk_idx + 1}...")
+                try:
+                    for result in self.tts.run(inputs):
+                        sample_rate, chunk_audio = result
+                        self.log("INFO", f"[STREAM] Got chunk {chunk_idx + 1}: {len(chunk_audio)/sample_rate:.2f}s")
+                        break  # Only yields once when return_fragment=False
+                except Exception as chunk_error:
+                    self.log("ERROR", f"[STREAM] Chunk {chunk_idx + 1} failed: {chunk_error}")
+                    import traceback
+                    self.log("ERROR", f"[STREAM] Traceback: {traceback.format_exc()}")
+                    raise
                 
                 # Convert to float32 if needed
                 if chunk_audio.dtype == np.int16:
@@ -464,18 +472,70 @@ class StreamingMoYoYoTTSWrapper:
                 **self.optimization_config
             }
             
-            self.log("DEBUG", f"Synthesizing {len(text)} chars")
+            self.log("INFO", f"[SYNTHESIS START] Synthesizing {len(text)} chars")
+            self.log("INFO", f"[SYNTHESIS] ref_audio: {self.ref_audio_path}")
+            self.log("INFO", f"[SYNTHESIS] prompt_text: {self.prompt_text[:50]}...")
+            self.log("INFO", f"[SYNTHESIS] text_lang: {language}")
 
             # Generate audio
-            for result in self.tts.run(inputs):
-                sample_rate, audio_data = result
-                break
+            import sys
+            self.log("INFO", "[SYNTHESIS] Calling self.tts.run()...")
+            print(f"DEBUG [WRAPPER]: About to call self.tts.run() with inputs:", file=sys.stderr, flush=True)
+            print(f"  text='{inputs['text'][:80]}...' (len={len(inputs['text'])})", file=sys.stderr, flush=True)
+            print(f"  text_lang={inputs.get('text_lang')}", file=sys.stderr, flush=True)
+            print(f"  ref_audio_path={inputs.get('ref_audio_path', 'N/A')[:80]}", file=sys.stderr, flush=True)
+            print(f"  prompt_text='{inputs.get('prompt_text', 'N/A')[:50]}...'", file=sys.stderr, flush=True)
+            print(f"  prompt_lang={inputs.get('prompt_lang')}", file=sys.stderr, flush=True)
+            print(f"  speed_factor={inputs.get('speed_factor')}", file=sys.stderr, flush=True)
+            print(f"  return_fragment={inputs.get('return_fragment')}", file=sys.stderr, flush=True)
+            print(f"  fragment_interval={inputs.get('fragment_interval')}", file=sys.stderr, flush=True)
+            print(f"  text_split_method={inputs.get('text_split_method')}", file=sys.stderr, flush=True)
+            print(f"  split_bucket={inputs.get('split_bucket')}", file=sys.stderr, flush=True)
+            print(f"  batch_size={inputs.get('batch_size')}", file=sys.stderr, flush=True)
+            print(f"  All input keys: {list(inputs.keys())}", file=sys.stderr, flush=True)
+            audio_chunks = []
+            sample_rate = None
+            chunk_count = 0
+            try:
+                for result in self.tts.run(inputs):
+                    sr, audio_chunk = result
+                    chunk_count += 1
+                    if sample_rate is None:
+                        sample_rate = sr
+                    chunk_len = len(audio_chunk) if audio_chunk is not None else 0
+                    print(f"DEBUG [WRAPPER]: Chunk {chunk_count}: sr={sr}, len={chunk_len} samples ({chunk_len/sr:.2f}s)", file=sys.stderr, flush=True)
+                    self.log("INFO", f"[SYNTHESIS] Got chunk {chunk_count}: sr={sr}, audio_shape={audio_chunk.shape if audio_chunk is not None else 'None'}")
+                    if audio_chunk is not None and len(audio_chunk) > 0:
+                        audio_chunks.append(audio_chunk)
+                    # Don't break - collect ALL chunks!
+
+                print(f"DEBUG [WRAPPER]: tts.run() finished. Total chunks collected: {chunk_count}", file=sys.stderr, flush=True)
+                self.log("INFO", f"[SYNTHESIS] Collected {chunk_count} chunks total")
+            except Exception as run_error:
+                self.log("ERROR", f"[SYNTHESIS] self.tts.run() failed: {run_error}")
+                import traceback
+                self.log("ERROR", f"[SYNTHESIS] Traceback: {traceback.format_exc()}")
+                raise
+
+            if not audio_chunks:
+                print(f"DEBUG [WRAPPER]: ERROR - No audio chunks collected!", file=sys.stderr, flush=True)
+                self.log("ERROR", "[SYNTHESIS] No audio chunks collected after tts.run()")
+                return None, None
+
+            # Concatenate all chunks
+            if len(audio_chunks) == 1:
+                audio_data = audio_chunks[0]
+                print(f"DEBUG [WRAPPER]: Single chunk, length={len(audio_data)} samples", file=sys.stderr, flush=True)
+            else:
+                audio_data = np.concatenate(audio_chunks)
+                print(f"DEBUG [WRAPPER]: Concatenated {len(audio_chunks)} chunks into {len(audio_data)} samples", file=sys.stderr, flush=True)
+                self.log("INFO", f"[SYNTHESIS] Concatenated {len(audio_chunks)} chunks into {len(audio_data)} samples")
 
             # Convert to float32 if needed
             if audio_data.dtype == np.int16:
                 audio_data = audio_data.astype(np.float32) / 32768.0
 
-            self.log("DEBUG", f"Synthesized {len(audio_data)/sample_rate:.2f}s audio")
+            self.log("INFO", f"[SYNTHESIS COMPLETE] Generated {len(audio_data)/sample_rate:.2f}s audio")
             return sample_rate, audio_data
             
         except Exception as e:

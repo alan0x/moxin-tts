@@ -3,13 +3,102 @@
 > 本文档用于快速恢复工作上下文，继续Moxin TTS独立应用开发
 
 **文档创建时间**: 2026-02-02
-**最后更新时间**: 2026-02-06
-**文档版本**: 7.0
-**当前阶段**: Pro Mode 训练完成，修复自定义音色加载和 UI 刷新问题
+**最后更新时间**: 2026-02-08
+**文档版本**: 8.0
+**当前阶段**: 发现 Pro Mode Few-Shot 训练根本性问题，建议使用 Express Mode
 
 ---
 
-## 📋 最新更新 (2026-02-06)
+## 📋 最新更新 (2026-02-08)
+
+### ⚠️ Pro Mode Few-Shot 训练根本性问题
+
+**问题描述**: Pro Mode 训练的自定义音色只能生成 ~1.5 秒的空白/静音音频，无论训练数据量、epoch 数、或配置如何调整。
+
+#### 调查过程
+
+**初始症状** (2026-02-08 早):
+- 用户完成 1 小时 GPT+SoVITS 训练后，训练的音色效果与预制 doubao 音色一模一样
+- 调查发现是因为 Rust 和 Python 代码不支持 `VoiceSource::Trained` 类型
+
+**Error 23: 训练音色未加载自定义模型 (已修复)**:
+- **问题**: Rust 只识别 `VoiceSource::Custom`，Python 没有 `VOICE:TRAINED` 格式支持
+- **修复**:
+  - 添加 `VOICE:TRAINED|<gpt>|<sovits>|<ref>|<prompt>|<lang>|<text>` 协议
+  - 更新 `screen.rs:2483-2514` 支持 Trained voices
+  - 更新 `main.py:28, 298-323` 解析并加载自定义模型权重
+- **结果**: 模型路径正确传递，但音频依然只有 1.5 秒
+
+**Error 24: 训练数据不足 (已发现)**:
+- 第一次训练只用了 18.7 秒音频（要求 3-10 分钟），导致只切出 3 个样本
+- 重新用 5 分钟音频训练，切出 65 个样本
+- **结果**: 音频长度依然只有 1.5 秒
+
+**Error 25: 使用早期 checkpoint (已修复)**:
+- UI 自动保存配置时使用 `sovits_model_e5_s160.pth` (epoch 5)
+- 手动更新为最终 checkpoint `sovits_model_e20_s640.pth` (epoch 20)
+- **结果**: 音频长度依然只有 1.5 秒
+
+**Error 26: 缺少预训练基础模型 (已修复)**:
+- **发现**: 训练配置显示 `pretrained_s2G: ""`, `pretrained_s2D: ""` (空)
+- **根本原因**: 缺少 GPT-SoVITS v2 预训练模型:
+  - `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2G2333k.pth`
+  - `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2D2333k.pth`
+- **修复**: 从 HuggingFace 下载并放置预训练模型 (s2G: 106MB, s2D: 93MB)
+- **第三次训练**: 使用预训练模型重新训练（20 epochs, 65 样本, 5 分钟音频）
+- **结果**: 配置正确（`pretrained_s2G` 和 `pretrained_s2D` 已填充），但音频依然只有 1.5 秒
+
+#### 最终诊断
+
+**所有尝试方案**:
+1. ✗ 修复 VOICE:TRAINED 协议支持
+2. ✗ 使用充足训练数据（5 分钟, 65 样本）
+3. ✗ 使用最终 checkpoint (epoch 20 vs epoch 5)
+4. ✗ 添加预训练基础模型（s2G2333k.pth + s2D2333k.pth）
+5. ✗ 多次重新训练验证
+
+**一致的症状**:
+- 预制 doubao 音色：正常生成 8.54 秒音频（46 字符文本）
+- 训练的音色：只生成 1.44-1.50 秒音频（46 字符文本）
+- 音频长度: ~46,000-48,000 samples (恰好约 1000 samples/字符)
+- 推断: 模型未真正学习语音合成，只生成最小化/占位符输出
+
+**技术分析**:
+- 训练确实在运行（日志显示 GPT 15 epochs, SoVITS 20 epochs）
+- 检查点文件大小相似但 MD5 哈希不同（说明权重有更新）
+- 配置正确（预训练模型已加载，训练参数合理）
+- 推理代码正常（doubao 工作正常，说明 TTS 引擎本身没问题）
+
+**结论**:
+存在 **GPT-SoVITS Few-Shot 训练/推理的根本性问题**，超出配置层面：
+- 可能是训练算法实现 bug
+- 可能是推理与训练不兼容
+- 可能是特定环境/依赖问题
+- 需要修改核心训练/推理代码才能解决
+
+#### 用户建议
+
+**推荐方案**:
+1. **使用 Express Mode（零样本克隆）**: 该功能工作正常，虽然效果不如 Few-Shot，但可用
+2. **向 mofa-studio 团队报告**: https://github.com/moxin-org/mofa-studio/issues
+   - 说明 Pro Mode Few-Shot 训练的模型无法正常合成
+   - 提供训练日志、配置和调查结果
+3. **尝试官方 GPT-SoVITS WebUI**:
+   - 下载官方 GPT-SoVITS 项目
+   - 用相同数据测试，确认是代码库问题还是通用问题
+
+**修改文件**:
+- `apps/mofa-tts/src/screen.rs:2483-2514` - VOICE:TRAINED 支持
+- `node-hub/dora-primespeech/dora_primespeech/main.py:28, 298-323` - VOICE:TRAINED 解析
+- `C:\Users\YY\.dora\primespeech\custom_voices.json` - 多次更新 checkpoint 路径
+
+**新增文件**:
+- `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2G2333k.pth` (106MB)
+- `C:\Users\YY\.dora\models\primespeech\moyoyo\gsv-v2final-pretrained\s2D2333k.pth` (93MB)
+
+---
+
+## 📋 上次更新 (2026-02-06)
 
 ### 训练完成与关键 Bug 修复
 

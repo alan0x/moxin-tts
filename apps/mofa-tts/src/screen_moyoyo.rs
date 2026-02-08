@@ -2708,6 +2708,17 @@ impl TTSScreen {
         let voice_info = voice_selector.get_voice(&voice_id);
 
         self.add_log(cx, &format!("[INFO] [tts] Using voice: {}", voice_id));
+        self.add_log(cx, "========== VOICE DEBUG START ==========");
+
+        // Debug: log voice source
+        if let Some(ref v) = voice_info {
+            self.add_log(cx, &format!("[DEBUG] [tts] Voice source: {:?}", v.source));
+            self.add_log(cx, &format!("[DEBUG] [tts] Has GPT weights: {}", v.gpt_weights.is_some()));
+            self.add_log(cx, &format!("[DEBUG] [tts] Has SoVITS weights: {}", v.sovits_weights.is_some()));
+        } else {
+            self.add_log(cx, "[DEBUG] [tts] Voice info is None - voice not found in selector");
+        }
+        self.add_log(cx, "========== VOICE DEBUG END ==========");
 
         // Clear previous audio
         self.stored_audio_samples.clear();
@@ -2788,6 +2799,14 @@ impl TTSScreen {
             // Voice not found, use default
             format!("VOICE:{}|{}", voice_id, text)
         };
+
+        // Debug: log the formatted prompt
+        let prompt_preview = if prompt.len() > 150 {
+            format!("{}...", &prompt[..150])
+        } else {
+            prompt.clone()
+        };
+        self.add_log(cx, &format!("[DEBUG] Sending prompt: {}", prompt_preview));
 
         // Send prompt to dora
         let send_result = self

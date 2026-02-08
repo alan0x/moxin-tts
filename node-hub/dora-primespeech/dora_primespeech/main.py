@@ -319,6 +319,7 @@ def main():
                                     "speed_factor": 1.1,
                                 }
                                 current_voice_name = "TRAINED"
+                                print(f"DEBUG: Created custom_voice_config for TRAINED voice: {custom_voice_config}", file=sys.stderr, flush=True)
                             else:
                                 send_log(node, "WARNING", f"Invalid TRAINED voice format (expected 6 parts), got {len(parts)}: {raw_text[:100]}", config.LOG_LEVEL)
                         # Check for custom voice format (Express Mode zero-shot cloning)
@@ -429,6 +430,7 @@ def main():
                     if custom_voice_config is not None:
                         # Use custom voice config (zero-shot cloning with user's reference audio)
                         current_voice_config = custom_voice_config.copy()
+                        print(f"DEBUG: Using custom_voice_config: voice={current_voice_name}, gpt={current_voice_config.get('gpt_weights', 'N/A')[:80]}, sovits={current_voice_config.get('sovits_weights', 'N/A')[:80]}", file=sys.stderr, flush=True)
                         send_log(node, "INFO", f"Using custom voice config with ref audio: {current_voice_config.get('reference_audio', 'N/A')}", config.LOG_LEVEL)
                     elif current_voice_name not in VOICE_CONFIGS:
                         send_log(node, "WARNING", f"Voice {current_voice_name} not found, using default: {voice_name}", config.LOG_LEVEL)
@@ -456,6 +458,9 @@ def main():
                         enable_streaming = config.RETURN_FRAGMENT if hasattr(config, 'RETURN_FRAGMENT') else False
 
                         # Initialize TTS wrapper using PRIMESPEECH_MODEL_DIR
+                        print(f"DEBUG: About to create MoYoYoTTSWrapper with voice='{moyoyo_voice}', device='{device}', config keys={list(current_voice_config.keys())}", file=sys.stderr, flush=True)
+                        print(f"DEBUG: Config gpt_weights={current_voice_config.get('gpt_weights', 'NONE')}", file=sys.stderr, flush=True)
+                        print(f"DEBUG: Config sovits_weights={current_voice_config.get('sovits_weights', 'NONE')}", file=sys.stderr, flush=True)
                         tts_engine = MoYoYoTTSWrapper(
                             voice=moyoyo_voice,
                             device=device,
@@ -464,6 +469,7 @@ def main():
                             voice_config=current_voice_config,
                             logger_func=lambda level, msg: send_log(node, level, msg, config.LOG_LEVEL)
                         )
+                        print(f"DEBUG: MoYoYoTTSWrapper created successfully", file=sys.stderr, flush=True)
                         
                         # Store current voice for change detection
                         tts_engine._current_voice = current_voice_name
@@ -502,8 +508,11 @@ def main():
                         continue
                 
                 # Synthesize speech
+                print(f"DEBUG: ========== SYNTHESIS START ==========", file=sys.stderr, flush=True)
+                print(f"DEBUG: Text to synthesize: '{text[:100]}...' (len={len(text)})", file=sys.stderr, flush=True)
+                print(f"DEBUG: Voice: {current_voice_name}, Config keys: {list(voice_config.keys())}", file=sys.stderr, flush=True)
                 start_time = time.time()
-                
+
                 try:
                     # Check if TTS engine is available
                     if tts_engine is None:
@@ -517,17 +526,22 @@ def main():
                     language = voice_config.get("text_lang", "zh")
                     speed = voice_config.get("speed_factor", 1.0)
                     fragment_interval = voice_config.get("fragment_interval")
-                    
+
+                    print(f"DEBUG: [SYNTHESIS PREP] text='{text[:50]}...', language={language}, speed={speed}, streaming={hasattr(tts_engine, 'enable_streaming') and tts_engine.enable_streaming}", file=sys.stderr, flush=True)
+
                     if hasattr(tts_engine, 'enable_streaming') and tts_engine.enable_streaming:
                         # Streaming synthesis
                         send_log(node, "DEBUG", "Using streaming synthesis...", config.LOG_LEVEL)
+                        print(f"DEBUG: [STREAMING] About to call synthesize_streaming() for {len(text)} chars", file=sys.stderr, flush=True)
                         fragment_num = 0
                         total_audio_duration = 0
-                        
+
                         if fragment_interval is not None:
                             tts_engine.optimization_config["fragment_interval"] = fragment_interval
 
+                        print(f"DEBUG: [STREAMING] Starting iteration over synthesize_streaming generator...", file=sys.stderr, flush=True)
                         for sample_rate, audio_fragment in tts_engine.synthesize_streaming(text, language=language, speed=speed):
+                            print(f"DEBUG: [STREAMING] Got fragment {fragment_num+1}: sample_rate={sample_rate}, audio_len={len(audio_fragment) if audio_fragment is not None else 0}, dtype={audio_fragment.dtype if audio_fragment is not None else 'None'}", file=sys.stderr, flush=True)
                             fragment_num += 1
                             fragment_duration = len(audio_fragment) / sample_rate
                             total_audio_duration += fragment_duration
@@ -550,14 +564,17 @@ def main():
                                     }
                                 )
                         
+                        print(f"DEBUG: [STREAMING] Finished iteration. Total fragments={fragment_num}, total_duration={total_audio_duration:.2f}s", file=sys.stderr, flush=True)
                         synthesis_time = time.time() - start_time
                         send_log(node, "INFO", f"Streamed {fragment_num} fragments, {total_audio_duration:.2f}s audio in {synthesis_time:.3f}s", config.LOG_LEVEL)
                         # If nothing was streamed, mark as error to avoid hanging clients
                         if fragment_num == 0:
+                            print(f"DEBUG: [STREAMING ERROR] No fragments produced!", file=sys.stderr, flush=True)
                             raise RuntimeError("No audio fragments produced during streaming synthesis")
                         
                     else:
                         # Batch synthesis
+                        print(f"DEBUG: [BATCH] Using batch synthesis...", file=sys.stderr, flush=True)
                         synth_kwargs = {
                             "language": language,
                             "speed": speed,
@@ -565,10 +582,13 @@ def main():
                         if fragment_interval is not None:
                             synth_kwargs["fragment_interval"] = fragment_interval
 
+                        print(f"DEBUG: [BATCH] About to call synthesize() with kwargs={synth_kwargs}", file=sys.stderr, flush=True)
                         sample_rate, audio_array = tts_engine.synthesize(text, **synth_kwargs)
-                        
+                        print(f"DEBUG: [BATCH] Got result: sample_rate={sample_rate}, audio_len={len(audio_array) if audio_array is not None else 0}, dtype={audio_array.dtype if audio_array is not None else 'None'}", file=sys.stderr, flush=True)
+
                         synthesis_time = time.time() - start_time
                         audio_duration = len(audio_array) / sample_rate
+                        print(f"DEBUG: [BATCH] Calculated duration={audio_duration:.2f}s, synthesis_time={synthesis_time:.3f}s", file=sys.stderr, flush=True)
                         if audio_array is None or len(audio_array) == 0:
                             raise RuntimeError("TTS returned empty audio array")
                         # Normalize dtype
