@@ -44,12 +44,27 @@ moxin-tts/
 
 ## 🚀 Quick Start
 
+### macOS Users
+
+**Quick Setup** (5 minutes):
+```bash
+# Install system dependencies
+./install_macos_deps.sh
+
+# One-click setup
+cd models/setup-local-models
+./quick_setup_macos.sh
+```
+
+See [QUICKSTART_MACOS.md](QUICKSTART_MACOS.md) for details or [MACOS_SETUP.md](MACOS_SETUP.md) for complete guide.
+
 ### Prerequisites
 
 - **Rust** 1.70+ (2021 edition)
 - **Python** 3.8+
 - **Cargo** package manager
 - **Git** for cloning the repository
+- **macOS Users**: See [MACOS_SETUP.md](MACOS_SETUP.md) for detailed setup instructions
 
 ### TTS Setup
 

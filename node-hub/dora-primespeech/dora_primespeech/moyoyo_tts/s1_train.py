@@ -4,6 +4,11 @@ import pdb
 
 if "_CUDA_VISIBLE_DEVICES" in os.environ:
     os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["_CUDA_VISIBLE_DEVICES"]
+
+# Enable MPS fallback for unsupported ops (e.g., FFT operations)
+# This allows MPS to accelerate most operations while falling back to CPU for unsupported ones
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 import argparse
 import logging
 from pathlib import Path
@@ -118,18 +123,30 @@ def main(args):
     )
     logger = TensorBoardLogger(name=output_dir.stem, save_dir=output_dir)
     os.environ["MASTER_ADDR"]="localhost"
+    # Detect GPU: CUDA (NVIDIA) or MPS (Apple Silicon)
+    has_cuda = torch.cuda.is_available()
+    has_mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+    use_gpu = has_cuda or has_mps
+
+    if has_mps:
+        accelerator = "mps"
+    elif has_cuda:
+        accelerator = "gpu"
+    else:
+        accelerator = "cpu"
+
     trainer: Trainer = Trainer(
         max_epochs=config["train"]["epochs"],
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        accelerator=accelerator,
         # val_check_interval=9999999999999999999999,###不要验证
         # check_val_every_n_epoch=None,
         limit_val_batches=0,
-        devices=-1 if torch.cuda.is_available() else 1,
+        devices=1,  # MPS only supports single device
         benchmark=False,
         fast_dev_run=False,
         strategy = DDPStrategy(
             process_group_backend="nccl" if platform.system() != "Windows" else "gloo"
-        ) if torch.cuda.is_available() else "auto",
+        ) if has_cuda else "auto",  # DDP only for multi-GPU CUDA
         precision=config["train"]["precision"],
         logger=logger,
         num_sanity_val_steps=0,

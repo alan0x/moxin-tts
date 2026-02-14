@@ -55,7 +55,13 @@ nodes:
       SPEED_FACTOR: 1.1
       FRAGMENT_INTERVAL: "0.1"
       USE_GPU: false
-      NUM_THREADS: 4
+      DEVICE: cpu
+      # CRITICAL: On macOS, PyTorch uses Apple's Accelerate framework for BLAS
+      # Setting OMP/MKL thread limits can cause deadlocks with Accelerate
+      # Let the system auto-detect optimal thread count
+      # OMP_NUM_THREADS: "1"  # Uncomment ONLY if still hangs
+      # MKL_NUM_THREADS: "1"  # Uncomment ONLY if still hangs
+      VECLIB_MAXIMUM_THREADS: "1"  # Limit Accelerate framework threads to avoid deadlock
       RETURN_FRAGMENT: "false"
       LOG_LEVEL: DEBUG
       ENABLE_INTERNAL_SEGMENTATION: "true"

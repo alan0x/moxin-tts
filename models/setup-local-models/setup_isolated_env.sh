@@ -48,8 +48,40 @@ print_info() {
 install_system_dependencies() {
     print_header "Installing System Dependencies"
     
-    # Install all required system dependencies
-    if command -v apt-get &> /dev/null; then
+    # macOS with Homebrew
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        if command -v brew &> /dev/null; then
+            print_info "Installing macOS dependencies via Homebrew..."
+            
+            # Check and install each dependency
+            BREW_PACKAGES=(
+                "portaudio"
+                "ffmpeg"
+                "git-lfs"
+                "openblas"
+                "libomp"
+            )
+            
+            for package in "${BREW_PACKAGES[@]}"; do
+                if brew list "$package" &> /dev/null; then
+                    print_info "$package already installed"
+                else
+                    print_info "Installing $package..."
+                    brew install "$package"
+                fi
+            done
+            
+            print_success "All macOS system dependencies installed"
+        else
+            print_error "Homebrew not found. Please install Homebrew first:"
+            echo ""
+            echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            echo ""
+            echo "After installing Homebrew, run this script again."
+            exit 1
+        fi
+    # Linux with apt-get
+    elif command -v apt-get &> /dev/null; then
         print_info "Installing system dependencies..."
         sudo apt-get update
         # Install essential build tools
@@ -61,6 +93,7 @@ install_system_dependencies() {
         # Install git-lfs for large file support
         sudo apt-get install -y git-lfs
         print_success "All system dependencies installed"
+    # Linux with yum
     elif command -v yum &> /dev/null; then
         print_info "Installing system dependencies..."
         sudo yum install -y gcc gcc-c++ gcc-gfortran make
@@ -68,6 +101,7 @@ install_system_dependencies() {
         sudo yum install -y portaudio-devel libgomp-devel ffmpeg
         sudo yum install -y git-lfs
         print_success "All system dependencies installed"
+    # Linux with dnf
     elif command -v dnf &> /dev/null; then
         print_info "Installing system dependencies..."
         sudo dnf install -y gcc gcc-c++ gcc-gfortran make
@@ -77,6 +111,7 @@ install_system_dependencies() {
         print_success "All system dependencies installed"
     else
         print_warning "Package manager not detected. Please install dependencies manually"
+        print_info "macOS: brew install portaudio ffmpeg git-lfs openblas libomp"
         print_info "Ubuntu/Debian: sudo apt install gcc g++ gfortran build-essential libopenblas-dev openssl libssl-dev portaudio19-dev libgomp1 libomp-dev ffmpeg git-lfs"
         print_info "RHEL/CentOS: sudo yum install gcc gcc-c++ gcc-gfortran openblas-devel openssl-devel portaudio-devel libgomp-devel ffmpeg git-lfs"
         print_info "Fedora: sudo dnf install gcc gcc-c++ gcc-gfortran openblas-devel openssl-devel portaudio-devel libgomp-devel ffmpeg git-lfs"
@@ -247,7 +282,7 @@ install_dependencies() {
     print_info "Installing ML libraries..."
     pip install transformers==4.45.0  # Voice chat pipeline standard (security compliant)
     pip install huggingface-hub==0.34.4
-    pip install datasets accelerate sentencepiece protobuf
+    pip install "datasets<3.0.0" accelerate sentencepiece protobuf simplejson sortedcontainers tensorboard matplotlib
     
     # Install dora-rs from GitHub (PyPI source distributions have build issues)
     print_info "Installing dora-rs..."

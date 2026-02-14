@@ -63,7 +63,6 @@ def test_dora_nodes():
     nodes = [
         ('dora_asr', 'dora-asr'),
         ('dora_primespeech', 'dora-primespeech'),
-        ('dora_qwen3', 'dora-qwen3'),
         ('dora_text_segmenter', 'dora-text-segmenter'),
         ('dora_speechmonitor', 'dora-speechmonitor'),
     ]

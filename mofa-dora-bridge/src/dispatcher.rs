@@ -240,8 +240,17 @@ impl DynamicNodeDispatcher {
 
         // Wait for dataflow to initialize and register dynamic nodes
         // This is necessary because `dora start --detach` returns immediately
+        // macOS typically needs more time than Windows for dynamic node registration
         info!("Waiting for dataflow to initialize...");
-        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Platform-specific delays
+        #[cfg(target_os = "macos")]
+        let init_delay = std::time::Duration::from_secs(5);
+        #[cfg(not(target_os = "macos"))]
+        let init_delay = std::time::Duration::from_secs(2);
+
+        std::thread::sleep(init_delay);
+        info!("Initialization delay completed ({}s)", init_delay.as_secs());
 
         // Create bridges if not already created
         if self.bridges.is_empty() {

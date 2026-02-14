@@ -3,6 +3,11 @@ warnings.filterwarnings("ignore")
 import utils, os
 hps = utils.get_hparams(stage=2)
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.train.gpu_numbers.replace("-", ",")
+
+# Enable MPS fallback for unsupported ops (e.g., FFT in mel spectrogram)
+# This allows MPS to accelerate most operations while falling back to CPU for torch.stft
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -42,7 +47,15 @@ torch.set_float32_matmul_precision("medium")  # 最低精度但最快（也就�
 # from config import pretrained_s2G,pretrained_s2D
 global_step = 0
 
-device = "cpu"  # cuda以外的设备，等mps优化后加入
+# Auto-detect device: CUDA (NVIDIA) or CPU
+# NOTE: MPS (Apple Silicon) is NOT supported for SoVITS training because:
+# 1. torch.stft produces ComplexFloat gradients
+# 2. MPS doesn't support complex number backward pass
+# 3. PYTORCH_ENABLE_MPS_FALLBACK=1 only works for forward, not backward
+if torch.cuda.is_available():
+    device = "cuda"
+else:
+    device = "cpu"  # Use CPU on macOS (MPS not supported for this model)
 
 
 def main():
@@ -50,7 +63,7 @@ def main():
     if torch.cuda.is_available():
         n_gpus = torch.cuda.device_count()
     else:
-        n_gpus = 1
+        n_gpus = 1  # MPS and CPU are single-device
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
 
@@ -133,14 +146,16 @@ def run(rank, n_gpus, hps):
         hps.train.segment_size // hps.data.hop_length,
         n_speakers=hps.data.n_speakers,
         **hps.model,
-    ).cuda(rank) if torch.cuda.is_available() else SynthesizerTrn(
-        hps.data.filter_length // 2 + 1,
-        hps.train.segment_size // hps.data.hop_length,
-        n_speakers=hps.data.n_speakers,
-        **hps.model,
-    ).to(device)
+    )
+    net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm)
 
-    net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank) if torch.cuda.is_available() else MultiPeriodDiscriminator(hps.model.use_spectral_norm).to(device)
+    # Move to device (CUDA with specific rank, or MPS/CPU)
+    if torch.cuda.is_available():
+        net_g = net_g.cuda(rank)
+        net_d = net_d.cuda(rank)
+    else:
+        net_g = net_g.to(device)
+        net_d = net_d.to(device)
     for name, param in net_g.named_parameters():
         if not param.requires_grad:
             print(name, "not requires_grad")

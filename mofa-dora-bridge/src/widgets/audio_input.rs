@@ -127,22 +127,28 @@ impl DoraBridge for AudioInputBridge {
             })
             .map_err(|e| BridgeError::ThreadSpawnFailed(e.to_string()))?;
 
-        // Wait for connection to establish (max 5 seconds)
+        // Wait for connection to establish
+        // macOS may need more time for Unix domain socket initialization
+        #[cfg(target_os = "macos")]
+        let connection_timeout = std::time::Duration::from_secs(10);
+        #[cfg(not(target_os = "macos"))]
+        let connection_timeout = std::time::Duration::from_secs(5);
+
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_secs(5) {
+        while start.elapsed() < connection_timeout {
             match *self.state.read() {
                 BridgeState::Connected => {
-                    info!("[AudioInputBridge] Connection verified");
+                    info!("[AudioInputBridge] Connection verified in {:?}", start.elapsed());
                     return Ok(());
                 }
                 BridgeState::Error => {
-                    error!("[AudioInputBridge] Connection failed");
+                    error!("[AudioInputBridge] Connection failed after {:?}", start.elapsed());
                     return Err(BridgeError::ConnectionFailed(
-                        "Failed to initialize Dora node".to_string(),
+                        "Failed to initialize Dora node - check Dora daemon is running".to_string(),
                     ));
                 }
                 _ => {
-                    thread::sleep(std::time::Duration::from_millis(100));
+                    thread::sleep(std::time::Duration::from_millis(200));
                 }
             }
         }

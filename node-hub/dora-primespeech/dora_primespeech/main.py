@@ -230,7 +230,16 @@ def main():
 
         # Initialize TTS wrapper
         moyoyo_voice = voice_name.lower().replace(" ", "")
-        device = "cuda" if config.USE_GPU and config.DEVICE.startswith("cuda") else "cpu"
+        # Support CUDA, MPS (Apple Silicon), or CPU
+        if config.USE_GPU:
+            if config.DEVICE.startswith("cuda"):
+                device = "cuda"
+            elif config.DEVICE == "mps":
+                device = "mps"
+            else:
+                device = "cpu"
+        else:
+            device = "cpu"
         enable_streaming = config.RETURN_FRAGMENT if hasattr(config, 'RETURN_FRAGMENT') else False
 
         tts_engine = MoYoYoTTSWrapper(
@@ -242,12 +251,14 @@ def main():
             logger_func=lambda level, msg: send_log(node, level, msg, config.LOG_LEVEL)
         )
 
-        # Verify initialization
-        if tts_engine is None or not hasattr(tts_engine, 'tts') or tts_engine.tts is None:
-            raise RuntimeError("TTS engine initialization failed - internal TTS is None")
+        # Verify initialization (don't access tts_engine.tts - can deadlock on macOS)
+        if tts_engine is None:
+            raise RuntimeError("TTS engine initialization failed")
 
-        # Store current voice for change detection
+        # Store current voice and model weights for change detection
         tts_engine._current_voice = voice_name
+        tts_engine._gpt_weights = voice_config.get('gpt_weights', '')
+        tts_engine._sovits_weights = voice_config.get('sovits_weights', '')
         
         model_loaded = True
         init_time = time.time() - start_time
@@ -410,15 +421,65 @@ def main():
                 # Check if voice changed and we need to reload model
                 current_tts_voice = getattr(tts_engine, '_current_voice', voice_name) if tts_engine else voice_name
                 voice_changed = (model_loaded and current_tts_voice != current_voice_name)
-                
+
                 print(f"DEBUG: Voice check - current: {current_tts_voice}, requested: {current_voice_name}, changed: {voice_changed}", file=sys.stderr, flush=True)
-                
+
+                # For custom voices using the same base model, just update ref audio
+                # instead of full reload (avoids dora connection timeout from long model load)
+                if voice_changed and model_loaded and tts_engine is not None and custom_voice_config is not None:
+                    current_gpt = custom_voice_config.get('gpt_weights', '')
+                    current_sovits = custom_voice_config.get('sovits_weights', '')
+                    engine_gpt = getattr(tts_engine, '_gpt_weights', '')
+                    engine_sovits = getattr(tts_engine, '_sovits_weights', '')
+                    same_base_model = (current_gpt == engine_gpt and current_sovits == engine_sovits)
+
+                    if same_base_model:
+                        print(f"DEBUG: Same base model, updating ref audio only (no reload)", file=sys.stderr, flush=True)
+                        new_ref = custom_voice_config.get('reference_audio', '')
+                        new_prompt = custom_voice_config.get('prompt_text', '')
+                        new_prompt_lang = custom_voice_config.get('prompt_lang', 'zh')
+
+                        # Update wrapper attributes
+                        tts_engine.ref_audio_path = new_ref
+                        tts_engine.prompt_text = new_prompt
+
+                        # Pre-process the new reference audio via set_ref_audio()
+                        # (safe now: CNHuBERT uses eager attention, torch threads=1)
+                        print(f"DEBUG: Calling set_ref_audio for: {new_ref}", file=sys.stderr, flush=True)
+                        tts_engine.tts.set_ref_audio(new_ref)
+                        # Update prompt text cache so TTS.run() doesn't re-process
+                        tts_engine.tts.prompt_cache["prompt_text"] = ""  # Force re-processing by clearing
+                        print(f"DEBUG: set_ref_audio completed successfully", file=sys.stderr, flush=True)
+
+                        tts_engine._current_voice = current_voice_name
+
+                        # Update voice_config for synthesis
+                        current_voice_config = custom_voice_config.copy()
+                        for key in ["text_lang", "prompt_lang", "top_k", "top_p", "temperature",
+                                   "speed_factor", "batch_size", "seed", "text_split_method",
+                                   "split_bucket", "return_fragment", "use_gpu", "device",
+                                   "sample_rate", "fragment_interval"]:
+                            if key in voice_config and key not in current_voice_config:
+                                current_voice_config[key] = voice_config[key]
+
+                        voice_changed = False  # Skip full reload
+                        print(f"DEBUG: Ref audio updated to: {new_ref}", file=sys.stderr, flush=True)
+
                 # Load or reload models if not loaded or voice changed
                 print(f"DEBUG: Checking reload condition - model_loaded={model_loaded}, voice_changed={voice_changed}", file=sys.stderr, flush=True)
                 if not model_loaded or voice_changed:
                     if voice_changed:
                         print(f"DEBUG: Voice changed from {tts_engine._current_voice} to {current_voice_name}, reloading model...", file=sys.stderr, flush=True)
                         send_log(node, "INFO", f"Voice changed from {tts_engine._current_voice} to {current_voice_name}, reloading model...", config.LOG_LEVEL)
+                        # Release old engine resources before creating new one
+                        # This helps prevent PyTorch/Accelerate deadlocks on macOS
+                        if tts_engine is not None:
+                            try:
+                                del tts_engine
+                                tts_engine = None
+                                import gc; gc.collect()
+                            except Exception:
+                                pass
                     else:
                         print(f"DEBUG: Loading models for the first time...", file=sys.stderr, flush=True)
                         send_log(node, "DEBUG", "Loading models for the first time...", config.LOG_LEVEL)
@@ -453,7 +514,17 @@ def main():
                         # Initialize TTS engine
                         # Convert voice name to lowercase and remove spaces for MoYoYo compatibility
                         moyoyo_voice = current_voice_name.lower().replace(" ", "")
-                        device = "cuda" if config.USE_GPU and config.DEVICE.startswith("cuda") else "cpu"
+
+                        # Support CUDA, MPS (Apple Silicon), or CPU
+                        if config.USE_GPU:
+                            if config.DEVICE.startswith("cuda"):
+                                device = "cuda"
+                            elif config.DEVICE == "mps":
+                                device = "mps"
+                            else:
+                                device = "cpu"
+                        else:
+                            device = "cpu"
 
                         enable_streaming = config.RETURN_FRAGMENT if hasattr(config, 'RETURN_FRAGMENT') else False
 
@@ -471,15 +542,13 @@ def main():
                         )
                         print(f"DEBUG: MoYoYoTTSWrapper created successfully", file=sys.stderr, flush=True)
                         
-                        # Store current voice for change detection
+                        # Store current voice and model weights for change detection
                         tts_engine._current_voice = current_voice_name
+                        tts_engine._gpt_weights = current_voice_config.get('gpt_weights', '')
+                        tts_engine._sovits_weights = current_voice_config.get('sovits_weights', '')
 
-                        # Check if initialization succeeded
-                        if tts_engine is None or not hasattr(tts_engine, 'tts') or tts_engine.tts is None:
-                            send_log(node, "ERROR", "TTS engine initialization failed!", config.LOG_LEVEL)
-                            send_log(node, "ERROR", "TTS wrapper exists but internal TTS is None", config.LOG_LEVEL)
-                        else:
-                            send_log(node, "DEBUG", "TTS engine initialized successfully", config.LOG_LEVEL)
+                        # Skip tts_engine.tts access check - can deadlock on macOS
+                        send_log(node, "DEBUG", "TTS engine initialized successfully", config.LOG_LEVEL)
                         model_loaded = True
                         send_log(node, "DEBUG", "TTS engine ready", config.LOG_LEVEL)
                     except Exception as init_err:
@@ -515,14 +584,15 @@ def main():
 
                 try:
                     # Check if TTS engine is available
+                    print(f"DEBUG: [S1] Checking tts_engine...", file=sys.stderr, flush=True)
                     if tts_engine is None:
                         send_log(node, "ERROR", "Cannot synthesize - TTS engine is None!", config.LOG_LEVEL)
                         raise RuntimeError("TTS engine not initialized")
-                    
-                    if hasattr(tts_engine, 'tts') and tts_engine.tts is None:
-                        send_log(node, "ERROR", "Cannot synthesize - internal TTS is None!", config.LOG_LEVEL)
-                        raise RuntimeError("Internal TTS engine not initialized")
-                    
+
+                    # Skip tts_engine.tts check - accessing .tts can deadlock on macOS
+                    # when PyTorch models are reloaded in the same process
+
+                    print(f"DEBUG: [S4] Getting config values...", file=sys.stderr, flush=True)
                     language = voice_config.get("text_lang", "zh")
                     speed = voice_config.get("speed_factor", 1.0)
                     fragment_interval = voice_config.get("fragment_interval")

@@ -10,6 +10,17 @@ import soundfile as sf
 import importlib
 import importlib.util
 
+# Force single-threaded operations on macOS to prevent Accelerate BLAS deadlocks
+# when PyTorch models are reloaded or ref audio is re-processed.
+if sys.platform == "darwin":
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    try:
+        import torch
+        torch.set_num_threads(1)
+    except ImportError:
+        pass
+
 
 def _ensure_langsegment_compatibility():
     """Ensure newer LangSegment releases work with legacy MoYoYo imports."""
@@ -138,11 +149,17 @@ class StreamingMoYoYoTTSWrapper:
             self._init_tts()
     
     def log(self, level, message):
-        """Log a message using the provided logger function or print."""
+        """Log a message using the provided logger function or print.
+
+        Uses stderr as primary output to avoid blocking on dora node.send_output()
+        which can hang on macOS after model reload.
+        """
+        print(f"[TTS-{level}] {message}", file=sys.stderr, flush=True)
         if self.logger_func:
-            self.logger_func(level, message)
-        else:
-            print(f"[{level}] {message}")
+            try:
+                self.logger_func(level, message)
+            except Exception:
+                pass  # Don't block on dora logging failures
     
     def _init_tts(self):
         """Initialize the TTS engine."""
@@ -198,7 +215,7 @@ class StreamingMoYoYoTTSWrapper:
 
         custom_config = {
             "device": self.device,
-            "is_half": self.device != "cpu",
+            "is_half": self.device not in ["cpu"],  # Use FP16 for CUDA and MPS
             "version": "v2",
             "t2s_weights_path": str(self.models_path / voice_config["t2s_weights"]),
             "vits_weights_path": str(self.models_path / voice_config["vits_weights"]),

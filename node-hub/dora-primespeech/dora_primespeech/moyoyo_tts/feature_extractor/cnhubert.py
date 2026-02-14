@@ -26,7 +26,8 @@ class CNHubert(nn.Module):
             base_path = cnhubert_base_path
         if os.path.exists(base_path):...
         else:raise FileNotFoundError(base_path)
-        self.model = HubertModel.from_pretrained(base_path, local_files_only=True)
+        # Use eager attention to avoid SDPA deadlock on macOS (Apple Accelerate BLAS)
+        self.model = HubertModel.from_pretrained(base_path, local_files_only=True, attn_implementation="eager")
         self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
             base_path, local_files_only=True
         )

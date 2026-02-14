@@ -163,7 +163,17 @@ def main():
                         pa.array([full_text]),
                         metadata=output_metadata
                     )
-                    
+
+                    # Also write result to temp file as fallback for macOS
+                    # where Dora dynamic node event routing may not work
+                    try:
+                        import json as _json
+                        _result_path = os.path.join(os.path.expanduser("~"), ".dora", "asr_result.json")
+                        with open(_result_path, "w", encoding="utf-8") as _f:
+                            _json.dump({"language": detected_language, "text": full_text}, _f, ensure_ascii=False)
+                    except Exception:
+                        pass
+
                     # Send language detection if enabled
                     if config.ENABLE_LANGUAGE_DETECTION:
                         node.send_output(

@@ -192,11 +192,17 @@ impl DoraBridge for AsrListenerBridge {
         self.worker_handle = Some(handle);
 
         // Wait for connection to succeed or fail
-        for _ in 0..50 {
-            // Wait up to 5 seconds
+        // macOS may need more time for Unix domain socket initialization
+        #[cfg(target_os = "macos")]
+        let max_wait_iterations = 100; // 10 seconds
+        #[cfg(not(target_os = "macos"))]
+        let max_wait_iterations = 50; // 5 seconds
+
+        for i in 0..max_wait_iterations {
             std::thread::sleep(std::time::Duration::from_millis(100));
             match *self.state.read() {
                 BridgeState::Connected => {
+                    info!("[AsrListener] Connection verified after {} ms", i * 100);
                     info!(
                         "[AsrListener] Bridge connected successfully: {}",
                         self.node_id

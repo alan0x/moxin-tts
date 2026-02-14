@@ -308,7 +308,8 @@ class TTS:
     def init_bert_weights(self, base_path: str):
         print(f"Loading BERT weights from {base_path}")
         self.bert_tokenizer = AutoTokenizer.from_pretrained(base_path)
-        self.bert_model = AutoModelForMaskedLM.from_pretrained(base_path)
+        # Use eager attention to avoid SDPA deadlock on macOS (Apple Accelerate BLAS)
+        self.bert_model = AutoModelForMaskedLM.from_pretrained(base_path, attn_implementation="eager")
         self.bert_model = self.bert_model.eval()
         self.bert_model = self.bert_model.to(self.configs.device)
         if self.configs.is_half and str(self.configs.device) != "cpu":
@@ -445,6 +446,10 @@ class TTS:
 
     def _get_ref_spec(self, ref_audio_path):
         audio = load_audio(ref_audio_path, int(self.configs.sampling_rate))
+        # Truncate to 10s if longer (consistent with _set_prompt_semantic)
+        max_samples = int(self.configs.sampling_rate * 10)
+        if len(audio) > max_samples:
+            audio = audio[:max_samples]
         audio = torch.FloatTensor(audio)
         maxx = audio.abs().max()
         if (maxx > 1): audio /= min(2, maxx)
@@ -470,10 +475,14 @@ class TTS:
         )
         with torch.no_grad():
             wav16k, sr = librosa.load(ref_wav_path, sr=16000)
-            y, sr, = soundfile.read(ref_wav_path)
-            duration = librosa.get_duration(y=y, sr=sr)
-            if (duration < 3 or duration > 10):
-                raise OSError(i18n("参考音频在3~10秒范围外，请更换！"))
+            duration = len(wav16k) / 16000.0  # Use resampled audio for accurate duration
+            print(f"[TTS] ref audio duration: {duration:.2f}s (path: {ref_wav_path})", file=sys.stderr, flush=True)
+            if duration < 1:
+                raise OSError(f"Reference audio too short: {duration:.1f}s (minimum: 1s)")
+            # If audio is longer than 10s, truncate to first 10s instead of crashing
+            if duration > 10:
+                print(f"[TTS] Truncating ref audio from {duration:.1f}s to 10s", file=sys.stderr, flush=True)
+                wav16k = wav16k[:int(16000 * 10)]
             wav16k = torch.from_numpy(wav16k)
             zero_wav_torch = torch.from_numpy(zero_wav)
             wav16k = wav16k.to(self.configs.device)
@@ -683,6 +692,8 @@ class TTS:
             Tuple[int, np.ndarray]: sampling rate and audio data.
         """
         ########## variables initialization ###########
+        import sys as _sys; _dbg = lambda msg: print(f"[TTS.run DEBUG] {msg}", file=_sys.stderr, flush=True)
+        _dbg(">>> ENTERED TTS.run()")
         self.stop_flag: bool = False
         text: str = inputs.get("text", "")
         text_lang: str = inputs.get("text_lang", "")
@@ -747,6 +758,7 @@ class TTS:
                 "ref_audio_path cannot be empty, when the reference audio is not set using set_ref_audio()")
 
         ###### setting reference audio and prompt text preprocessing ########
+        _dbg("PHASE 1: Reference audio processing...")
         t0 = ttime()
         if (ref_audio_path is not None) and (ref_audio_path != self.prompt_cache["ref_audio_path"]):
             if not os.path.exists(ref_audio_path):
@@ -782,6 +794,7 @@ class TTS:
                 self.prompt_cache["bert_features"] = bert_features
                 self.prompt_cache["norm_text"] = norm_text
 
+        _dbg(f"PHASE 1 done ({ttime()-t0:.2f}s). PHASE 2: Text preprocessing...")
         ###### text preprocessing ########
         t1 = ttime()
         data: list = None
@@ -838,6 +851,7 @@ class TTS:
                 return batch[0]
 
         t2 = ttime()
+        _dbg(f"PHASE 2 done ({t2-t1:.2f}s). PHASE 3: Inference loop starting...")
         try:
             #print("############ 推理 ############")
             ###### inference ######
@@ -867,6 +881,7 @@ class TTS:
                     prompt = self.prompt_cache["prompt_semantic"].expand(len(all_phoneme_ids), -1).to(
                         self.configs.device)
 
+                _dbg(f"  PHASE 3a: AR model infer_panel (t2s) starting... device={self.configs.device}")
                 pred_semantic_list, idx_list = self.t2s_model.model.infer_panel(
                     all_phoneme_ids,
                     all_phoneme_lens,
@@ -881,6 +896,7 @@ class TTS:
                     repetition_penalty=repetition_penalty,
                 )
                 t4 = ttime()
+                _dbg(f"  PHASE 3a done ({t4-t3:.2f}s). AR model finished.")
                 t_34 += t4 - t3
 
                 refer_audio_spec: torch.Tensor = [item.to(dtype=self.precision, device=self.configs.device) for item in

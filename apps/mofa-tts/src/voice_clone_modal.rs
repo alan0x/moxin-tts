@@ -1406,6 +1406,9 @@ pub struct VoiceCloneModal {
     asr_sent: bool,
 
     #[rust]
+    asr_sent_time: Option<std::time::Instant>,
+
+    #[rust]
     shared_dora_state: Option<std::sync::Arc<mofa_dora_bridge::SharedDoraState>>,
 
     // ASR bridge readiness
@@ -1598,6 +1601,15 @@ impl Widget for VoiceCloneModal {
                 );
 
                 self.asr_sent = true;
+                self.asr_sent_time = Some(std::time::Instant::now());
+
+                // Delete any stale ASR result file
+                let result_path = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".dora")
+                    .join("asr_result.json");
+                let _ = std::fs::remove_file(&result_path);
+
                 self.add_log(
                     cx,
                     "[INFO] Audio send request sent, waiting for transcription...",
@@ -1607,12 +1619,47 @@ impl Widget for VoiceCloneModal {
 
         // Poll for ASR transcription result
         if self.asr_sent && self.recording_status == RecordingStatus::Transcribing {
+            // Try primary path: shared_dora_state (Dora event routing)
             let transcription_result = self
                 .shared_dora_state
                 .as_ref()
                 .and_then(|shared| shared.asr_transcription.read_if_dirty());
 
-            if let Some(Some((language, text))) = transcription_result {
+            // Try fallback path: ASR result file (for macOS where Dora event routing may fail)
+            let (language, text) = if let Some(Some((lang, txt))) = transcription_result {
+                (lang, txt)
+            } else if let Some(sent_time) = self.asr_sent_time {
+                // Only check file after 2 seconds (give ASR time to process)
+                if sent_time.elapsed() > std::time::Duration::from_secs(2) {
+                    let result_path = dirs::home_dir()
+                        .unwrap_or_default()
+                        .join(".dora")
+                        .join("asr_result.json");
+                    if let Ok(content) = std::fs::read_to_string(&result_path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            let lang = json.get("language").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
+                            let txt = json.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            if !txt.is_empty() {
+                                // Delete the file to avoid re-reading stale results
+                                let _ = std::fs::remove_file(&result_path);
+                                (lang, txt)
+                            } else {
+                                ("".into(), "".into())
+                            }
+                        } else {
+                            ("".into(), "".into())
+                        }
+                    } else {
+                        ("".into(), "".into())
+                    }
+                } else {
+                    ("".into(), "".into())
+                }
+            } else {
+                ("".into(), "".into())
+            };
+
+            if !text.is_empty() {
                 self.add_log(
                     cx,
                     &format!("[INFO] Transcription received ({}): {}", language, text),
@@ -1630,15 +1677,10 @@ impl Widget for VoiceCloneModal {
                     ))
                     .set_text(cx, &text);
 
-                // Update file info with the audio path
-                if let Some((_, _, ref audio_path)) = self.pending_asr_audio {
-                    self.handle_file_selected(cx, audio_path.clone());
-                }
-
                 self.recording_status = RecordingStatus::Completed;
-                self.add_log(cx, "[INFO] Recording and transcription complete!");
                 self.pending_asr_audio = None;
                 self.asr_sent = false;
+                self.asr_sent_time = None;
 
                 // Reset animation timer and hide transcription loading overlay
                 self.transcription_animation_start_time = None;
@@ -2074,7 +2116,8 @@ impl VoiceCloneModal {
                     .set_text(cx, &info_text);
 
                 self.audio_info = Some(info);
-                self.selected_file = Some(path);
+                self.selected_file = Some(path.clone());
+                self.clear_error(cx);
 
                 // Show preview button
                 self.view
@@ -2088,11 +2131,43 @@ impl VoiceCloneModal {
                             .preview_btn
                     ))
                     .set_visible(cx, true);
+
+                // Trigger ASR transcription for uploaded file (same as recording flow)
+                // Skip if already transcribing (avoids re-trigger when called from ASR result handler)
+                if self.recording_status != RecordingStatus::Transcribing {
+                    self.transcribe_audio(cx, &path);
+                }
             }
             Err(e) => {
-                self.add_log(cx, &format!("[ERROR] {}", e));
                 self.selected_file = None;
                 self.audio_info = None;
+
+                // Reset file name label
+                self.view
+                    .label(ids!(
+                        modal_container
+                            .modal_wrapper
+                            .modal_content
+                            .body
+                            .file_selector
+                            .file_row
+                            .file_name
+                    ))
+                    .set_text(cx, "No file selected");
+
+                // Clear audio info label
+                self.view
+                    .label(ids!(
+                        modal_container
+                            .modal_wrapper
+                            .modal_content
+                            .body
+                            .file_selector
+                            .audio_info
+                    ))
+                    .set_text(cx, "");
+
+                // Hide preview button
                 self.view
                     .button(ids!(
                         modal_container
@@ -2104,6 +2179,9 @@ impl VoiceCloneModal {
                             .preview_btn
                     ))
                     .set_visible(cx, false);
+
+                // Show error to user
+                self.show_error(cx, &e);
             }
         }
 
@@ -2866,10 +2944,11 @@ impl VoiceCloneModal {
         match hound::WavReader::open(audio_path) {
             Ok(mut reader) => {
                 let spec = reader.spec();
-                let sample_rate = spec.sample_rate;
+                let source_sample_rate = spec.sample_rate;
+                let channels = spec.channels as usize;
 
                 // Read all samples as f32
-                let samples: Vec<f32> = if spec.sample_format == hound::SampleFormat::Float {
+                let raw_samples: Vec<f32> = if spec.sample_format == hound::SampleFormat::Float {
                     reader.samples::<f32>().filter_map(|s| s.ok()).collect()
                 } else {
                     reader
@@ -2879,13 +2958,34 @@ impl VoiceCloneModal {
                         .collect()
                 };
 
+                // Convert to mono if stereo
+                let mono_samples: Vec<f32> = if channels > 1 {
+                    raw_samples
+                        .chunks(channels)
+                        .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
+                        .collect()
+                } else {
+                    raw_samples
+                };
+
+                // Resample to 16kHz for ASR
+                let target_rate: u32 = 16000;
+                let samples = if source_sample_rate != target_rate {
+                    Self::resample(&mono_samples, source_sample_rate, target_rate)
+                } else {
+                    mono_samples
+                };
+
                 self.add_log(
                     cx,
-                    &format!("[INFO] Loaded {} samples from audio file", samples.len()),
+                    &format!(
+                        "[INFO] Audio prepared for ASR: {} samples ({}ch {}Hz -> 1ch 16kHz)",
+                        samples.len(), channels, source_sample_rate
+                    ),
                 );
 
                 // Store for sending in handle_event
-                self.pending_asr_audio = Some((samples, sample_rate, audio_path.clone()));
+                self.pending_asr_audio = Some((samples, target_rate, audio_path.clone()));
                 self.asr_sent = false;
                 self.recording_status = RecordingStatus::Transcribing;
 
@@ -2903,10 +3003,9 @@ impl VoiceCloneModal {
                     .set_visible(cx, true);
             }
             Err(e) => {
-                self.add_log(cx, &format!("[ERROR] Failed to read audio file: {}", e));
-                self.recording_status = RecordingStatus::Error("Read failed".to_string());
-                self.handle_file_selected(cx, audio_path.clone());
-                self.add_log(cx, "[INFO] Audio saved. Please enter the text manually.");
+                self.add_log(cx, &format!("[ERROR] Failed to read audio for ASR: {}", e));
+                self.add_log(cx, "[INFO] Please enter the reference text manually.");
+                self.recording_status = RecordingStatus::Idle;
             }
         }
 

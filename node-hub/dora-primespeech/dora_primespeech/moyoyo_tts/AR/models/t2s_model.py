@@ -64,7 +64,7 @@ def scaled_dot_product_attention(query:torch.Tensor, key:torch.Tensor, value:tor
 
     return attn_weight @ value
 
-@torch.jit.script
+# @torch.jit.script  # Disabled: causes hang on macOS ARM64 (Apple Silicon)
 class T2SMLP:
     def __init__(self, w1, b1, w2, b2):
         self.w1 = w1
@@ -78,7 +78,7 @@ class T2SMLP:
         return x
 
 
-@torch.jit.script
+# @torch.jit.script  # Disabled: causes hang on macOS ARM64 (Apple Silicon)
 class T2SBlock:
     def __init__(
             self,
@@ -122,7 +122,7 @@ class T2SBlock:
         else:
             return x * padding_mask
 
-    def process_prompt(self, x:torch.Tensor, attn_mask : torch.Tensor, padding_mask:Optional[torch.Tensor]=None, torch_sdpa:bool=True):
+    def process_prompt(self, x:torch.Tensor, attn_mask : torch.Tensor, padding_mask:Optional[torch.Tensor]=None, torch_sdpa:bool=False):
 
 
         q, k, v = F.linear(self.to_mask(x, padding_mask), self.qkv_w, self.qkv_b).chunk(3, dim=-1)
@@ -185,7 +185,7 @@ class T2SBlock:
             )
         return x, k_cache, v_cache
 
-    def decode_next_token(self, x:torch.Tensor, k_cache:torch.Tensor, v_cache:torch.Tensor, attn_mask:Optional[torch.Tensor]=None, torch_sdpa:bool=True):
+    def decode_next_token(self, x:torch.Tensor, k_cache:torch.Tensor, v_cache:torch.Tensor, attn_mask:Optional[torch.Tensor]=None, torch_sdpa:bool=False):
         q, k, v = F.linear(x, self.qkv_w, self.qkv_b).chunk(3, dim=-1)
 
         k_cache = torch.cat([k_cache, k], dim=1)
@@ -224,7 +224,7 @@ class T2SBlock:
         return x, k_cache, v_cache
 
 
-@torch.jit.script
+# @torch.jit.script  # Disabled: causes hang on macOS ARM64 (Apple Silicon)
 class T2STransformer:
     def __init__(self, num_blocks : int, blocks: List[T2SBlock]):
         self.num_blocks : int = num_blocks
@@ -233,7 +233,7 @@ class T2STransformer:
     def process_prompt(
         self, x:torch.Tensor, attn_mask : torch.Tensor,
         padding_mask : Optional[torch.Tensor]=None,
-        torch_sdpa:bool=True
+        torch_sdpa:bool=False
         ):
         k_cache : List[torch.Tensor] = []
         v_cache : List[torch.Tensor] = []
@@ -248,7 +248,7 @@ class T2STransformer:
         k_cache: List[torch.Tensor],
         v_cache: List[torch.Tensor],
         attn_mask : Optional[torch.Tensor]=None,
-        torch_sdpa:bool=True
+        torch_sdpa:bool=False
     ):
         for i in range(self.num_blocks):
             x, k_cache[i], v_cache[i] = self.blocks[i].decode_next_token(x, k_cache[i], v_cache[i], attn_mask, torch_sdpa)
@@ -664,11 +664,17 @@ class Text2SemanticDecoder(nn.Module):
         xy_padding_mask = xy_padding_mask.view(bsz, src_len, 1).expand(-1, -1, self.model_dim)
 
         ###### decode #####
+        import sys as _sys2; _ar_dbg2 = lambda msg: print(f"[AR-BATCH DEBUG] {msg}", file=_sys2.stderr, flush=True)
+        _ar_dbg2(f"infer_panel_batch_infer: starting loop, x.shape={x.shape}, bsz={bsz}, device={x.device}")
         y_list = [None]*y.shape[0]
         batch_idx_map = list(range(y.shape[0]))
         idx_list = [None]*y.shape[0]
         # for idx in tqdm(range(1500)):
         for idx in range(1500):
+            if idx == 0:
+                _ar_dbg2(f"  step 0: process_prompt (first step, heaviest)...")
+            elif idx <= 3 or idx % 100 == 0:
+                _ar_dbg2(f"  step {idx}: decode_next_token...")
             if idx == 0:
                 xy_dec, k_cache, v_cache = self.t2s_transformer.process_prompt(xy_pos, xy_attn_mask, xy_padding_mask, False)
             else:
@@ -842,12 +848,20 @@ class Text2SemanticDecoder(nn.Module):
                                                 .view(bsz, self.num_head, src_len, src_len)\
                                                 .to(device=x.device, dtype=torch.bool)
 
+        import sys as _sys; _ar_dbg = lambda msg: print(f"[AR DEBUG] {msg}", file=_sys.stderr, flush=True)
+        _ar_dbg(f"infer_panel_naive: starting 1500-step loop, x.shape={x.shape}, device={x.device}")
         # for idx in tqdm(range(1500)):
         for idx in range(1500):
+            if idx == 0:
+                _ar_dbg(f"  step 0: process_prompt (first step, heaviest)...")
+            elif idx <= 3 or idx % 100 == 0:
+                _ar_dbg(f"  step {idx}: decode_next_token...")
             if xy_attn_mask is not None:
                 xy_dec, k_cache, v_cache = self.t2s_transformer.process_prompt(xy_pos, xy_attn_mask, None)
             else:
                 xy_dec, k_cache, v_cache = self.t2s_transformer.decode_next_token(xy_pos, k_cache, v_cache)
+            if idx == 0:
+                _ar_dbg(f"  step 0: process_prompt DONE")
 
             logits = self.ar_predict_layer(
                 xy_dec[:, -1]

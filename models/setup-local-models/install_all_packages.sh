@@ -53,10 +53,37 @@ print_header "Checking System Dependencies"
 if [[ "$OS_TYPE" == "linux" ]]; then
     print_info "Installing essential build tools and libraries via apt..."
     sudo apt-get update
-    sudo apt-get install -y gcc gfortran libopenblas-dev build-essential openssl libssl-dev
+    sudo apt-get install -y gcc gfortran libopenblas-dev build-essential openssl libssl-dev portaudio19-dev
     print_success "System dependencies installed"
 else
-    print_info "macOS detected. Ensure command line tools/Homebrew packages (gcc, gfortran, openblas, openssl) are installed if builds fail."
+    print_info "macOS detected. Checking Homebrew dependencies..."
+    if command -v brew &> /dev/null; then
+        REQUIRED_PACKAGES=("portaudio" "ffmpeg" "openblas" "libomp")
+        MISSING_PACKAGES=()
+        
+        for package in "${REQUIRED_PACKAGES[@]}"; do
+            if ! brew list "$package" &> /dev/null; then
+                MISSING_PACKAGES+=("$package")
+            fi
+        done
+        
+        if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
+            print_error "Missing Homebrew packages: ${MISSING_PACKAGES[*]}"
+            echo ""
+            echo "Please install them with:"
+            echo "  brew install ${MISSING_PACKAGES[*]}"
+            echo ""
+            exit 1
+        else
+            print_success "All required Homebrew packages are installed"
+        fi
+    else
+        print_error "Homebrew not found. Please install Homebrew first:"
+        echo ""
+        echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+        echo ""
+        exit 1
+    fi
 fi
 
 # Get the script directory and project root
@@ -88,6 +115,12 @@ print_success "dora-speechmonitor installed"
 print_info "Installing dora-text-segmenter..."
 pip install -e node-hub/dora-text-segmenter
 print_success "dora-text-segmenter installed"
+
+# Pro Mode (Few-Shot) training dependencies
+# datasets>=3.0.0 is incompatible with modelscope 1.34.0 needed for denoising
+print_info "Installing Pro Mode training dependencies..."
+pip install "datasets<3.0.0" simplejson sortedcontainers tensorboard matplotlib
+print_success "Pro Mode dependencies installed"
 
 # Install Rust if not already installed
 print_header "Setting up Rust"
