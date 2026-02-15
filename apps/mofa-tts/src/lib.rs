@@ -17,6 +17,7 @@ pub mod voice_clone_modal;
 pub mod voice_data;
 pub mod voice_persistence;
 pub mod voice_selector;
+pub mod task_persistence;
 
 // Re-export shared components from mofa-ui
 pub use mofa_ui::log_bridge;

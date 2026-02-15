@@ -4,13 +4,23 @@
 use crate::audio_player::TTSPlayer;
 use crate::dora_integration::DoraIntegration;
 use crate::log_bridge;
-use crate::mofa_hero::{ConnectionStatus, MofaHeroAction, MofaHeroWidgetExt};
 use crate::voice_clone_modal::{VoiceCloneModalAction, VoiceCloneModalWidgetExt};
-use crate::voice_data::TTSStatus;
+use crate::voice_data::{TTSStatus, Voice};
 use crate::voice_selector::{VoiceSelectorAction, VoiceSelectorWidgetExt};
+use crate::task_persistence;
 use hound::WavReader;
 use makepad_widgets::*;
 use std::path::PathBuf;
+
+/// Current page in the application
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppPage {
+    #[default]
+    TextToSpeech,
+    VoiceLibrary,
+    VoiceClone,
+    TaskDetail,
+}
 
 live_design! {
     use link::theme::*;
@@ -18,7 +28,6 @@ live_design! {
     use link::widgets::*;
 
     use mofa_widgets::theme::*;
-    use mofa_ui::widgets::mofa_hero::MofaHero;
     use crate::voice_selector::VoiceSelector;
     use crate::voice_clone_modal::VoiceCloneModal;
 
@@ -48,7 +57,7 @@ live_design! {
 
             draw_bg: {
                 instance dark_mode: 0.0
-                border_radius: 12.0
+                instance border_radius: 12.0
                 fn pixel(self) -> vec4 {
                     let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                     sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -131,7 +140,7 @@ live_design! {
                     draw_bg: {
                         instance dark_mode: 0.0
                         instance hover: 0.0
-                        border_radius: 6.0
+                        instance border_radius: 6.0
                         fn pixel(self) -> vec4 {
                             let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                             sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -160,7 +169,7 @@ live_design! {
                     draw_bg: {
                         instance dark_mode: 0.0
                         instance hover: 0.0
-                        border_radius: 6.0
+                        instance border_radius: 6.0
                         fn pixel(self) -> vec4 {
                             let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                             sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -190,7 +199,7 @@ live_design! {
 
         draw_bg: {
             instance dark_mode: 0.0
-            border_radius: 8.0
+            instance border_radius: 8.0
             fn pixel(self) -> vec4 {
                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                 sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -233,6 +242,166 @@ live_design! {
                     }
                 }
                 text: "Downloaded successfully!"
+            }
+        }
+    }
+
+    // Confirmation dialog for cancelling tasks
+    ConfirmCancelModal = <View> {
+        width: Fill, height: Fill
+        flow: Overlay
+        align: {x: 0.5, y: 0.5}
+        visible: false
+
+        // Semi-transparent backdrop
+        backdrop = <View> {
+            width: Fill, height: Fill
+            show_bg: true
+            draw_bg: {
+                fn pixel(self) -> vec4 {
+                    return vec4(0.0, 0.0, 0.0, 0.5);
+                }
+            }
+        }
+
+        // Dialog content
+        dialog = <RoundedView> {
+            width: 400, height: Fit
+            flow: Down
+            spacing: 0
+
+            draw_bg: {
+                instance dark_mode: 0.0
+                instance border_radius: 12.0
+                fn pixel(self) -> vec4 {
+                    let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                    sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                    let bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                    sdf.fill(bg);
+                    return sdf.result;
+                }
+            }
+
+            // Header
+            header = <View> {
+                width: Fill, height: Fit
+                padding: {left: 24, right: 24, top: 20, bottom: 16}
+                flow: Down
+                spacing: 8
+
+                title = <Label> {
+                    width: Fill, height: Fit
+                    draw_text: {
+                        instance dark_mode: 0.0
+                        text_style: <FONT_BOLD>{ font_size: 18.0 }
+                        fn get_color(self) -> vec4 {
+                            return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                        }
+                    }
+                    text: "Cancel Task?"
+                }
+
+                task_name = <Label> {
+                    width: Fill, height: Fit
+                    draw_text: {
+                        instance dark_mode: 0.0
+                        text_style: <FONT_SEMIBOLD>{ font_size: 14.0 }
+                        fn get_color(self) -> vec4 {
+                            return mix((PRIMARY_600), (PRIMARY_400), self.dark_mode);
+                        }
+                    }
+                    text: ""
+                }
+
+                message = <Label> {
+                    width: Fill, height: Fit
+                    draw_text: {
+                        instance dark_mode: 0.0
+                        text_style: { font_size: 14.0 }
+                        fn get_color(self) -> vec4 {
+                            return mix((TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                        }
+                    }
+                    text: "The task will be stopped and cannot be resumed."
+                }
+            }
+
+            // Divider
+            <View> {
+                width: Fill, height: 1
+                margin: {top: 8}
+                show_bg: true
+                draw_bg: {
+                    instance dark_mode: 0.0
+                    fn pixel(self) -> vec4 {
+                        return mix((BORDER), (BORDER_DARK), self.dark_mode);
+                    }
+                }
+            }
+
+            // Footer with buttons
+            footer = <View> {
+                width: Fill, height: Fit
+                padding: {left: 24, right: 24, top: 16, bottom: 20}
+                flow: Right
+                align: {x: 1.0, y: 0.5}
+                spacing: 12
+
+                back_btn = <Button> {
+                    width: Fit, height: 36
+                    padding: {left: 20, right: 20}
+                    text: "Go Back"
+
+                    draw_bg: {
+                        instance dark_mode: 0.0
+                        instance hover: 0.0
+                        instance border_radius: 6.0
+                        fn pixel(self) -> vec4 {
+                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                            let base = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                            let hover_color = mix((SLATE_200), (SLATE_600), self.dark_mode);
+                            sdf.fill(mix(base, hover_color, self.hover));
+                            sdf.stroke(mix((SLATE_300), (SLATE_500), self.dark_mode), 1.0);
+                            return sdf.result;
+                        }
+                    }
+
+                    draw_text: {
+                        instance dark_mode: 0.0
+                        text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+                        fn get_color(self) -> vec4 {
+                            return mix((TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                        }
+                    }
+                }
+
+                confirm_btn = <Button> {
+                    width: Fit, height: 36
+                    padding: {left: 20, right: 20}
+                    text: "Cancel Task"
+
+                    draw_bg: {
+                        instance dark_mode: 0.0
+                        instance hover: 0.0
+                        instance border_radius: 6.0
+                        fn pixel(self) -> vec4 {
+                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                            let base = mix((ORANGE_500), vec4(0.95, 0.45, 0.1, 1.0), self.dark_mode);
+                            let hover_color = mix(vec4(0.95, 0.45, 0.1, 1.0), (ORANGE_500), self.dark_mode);
+                            sdf.fill(mix(base, hover_color, self.hover));
+                            return sdf.result;
+                        }
+                    }
+
+                    draw_text: {
+                        text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+                        fn get_color(self) -> vec4 {
+                            return (WHITE);
+                        }
+                    }
+                }
             }
         }
     }
@@ -685,18 +854,18 @@ live_design! {
                 spacing: 20
                 align: {y: 0.0}
 
-                // Hidden MofaHero - keep for compatibility but make it invisible/minimal
-                hero = <MofaHero> {
-                    width: Fill
-                    height: 0
-                    visible: false
-                }
-
                 // Main content area - MoYoYo.tts style unified layout
                 content_area = <View> {
                     width: Fill, height: Fill
-                    flow: Down
-                    spacing: 20
+                    flow: Overlay  // Use Overlay to stack pages
+                    spacing: 0
+
+                    // ============ Text to Speech Page ============
+                    tts_page = <View> {
+                        width: Fill, height: Fill
+                        flow: Down
+                        spacing: 20
+                        visible: true  // Default visible
 
                     // Page title - MoYoYo.tts style
                     page_header = <View> {
@@ -730,7 +899,7 @@ live_design! {
                         show_bg: true
                         draw_bg: {
                             instance dark_mode: 0.0
-                            border_radius: 16.0
+                            instance border_radius: 16.0
                             fn pixel(self) -> vec4 {
                                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                                 sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -889,7 +1058,7 @@ live_design! {
                             show_bg: true
                             draw_bg: {
                                 instance dark_mode: 0.0
-                                border_radius: 16.0
+                                instance border_radius: 16.0
                                 fn pixel(self) -> vec4 {
                                     let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                                     sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -906,8 +1075,693 @@ live_design! {
                         }
                     }
                     } // End cards_container
-                }
-            }
+                    } // End tts_page
+
+                    // ============ Voice Library Page ============
+                    library_page = <View> {
+                        width: Fill, height: Fill
+                        flow: Down
+                        spacing: 20
+                        visible: false  // Hidden by default
+
+                        show_bg: true
+                        draw_bg: {
+                            fn pixel(self) -> vec4 {
+                                return vec4(1.0, 0.0, 0.0, 1.0); // DEBUG: bright red background
+                            }
+                        }
+
+                        // Page header
+                        library_header = <View> {
+                            width: Fill, height: Fit
+                            flow: Right
+                            align: {y: 0.5}
+                            spacing: 16
+
+                            library_title = <Label> {
+                                width: Fit, height: Fit
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_SEMIBOLD>{ font_size: 24.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((MOYOYO_TEXT_PRIMARY), (MOYOYO_TEXT_PRIMARY_DARK), self.dark_mode);
+                                    }
+                                }
+                                text: "音色库"
+                            }
+
+                            <View> { width: Fill, height: 1 }  // Spacer
+
+                            // Search box
+                            search_input = <TextInput> {
+                                width: 200, height: 40
+                                padding: {left: 12, right: 12}
+                                empty_text: "搜索音色..."
+                                text: ""
+
+                                draw_bg: {
+                                    instance dark_mode: 0.0
+                                    instance border_radius: 8.0
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                        let bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                                        sdf.fill(bg);
+                                        let border = mix((MOYOYO_BORDER_LIGHT), (SLATE_700), self.dark_mode);
+                                        sdf.stroke(border, 1.0);
+                                        return sdf.result;
+                                    }
+                                }
+
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: { font_size: 14.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((MOYOYO_TEXT_PRIMARY), (MOYOYO_TEXT_PRIMARY_DARK), self.dark_mode);
+                                    }
+                                }
+                            }
+
+                            // Refresh button
+                            refresh_btn = <Button> {
+                                width: Fit, height: 40
+                                padding: {left: 16, right: 16}
+                                text: "🔄 刷新"
+
+                                draw_bg: {
+                                    instance hover: 0.0
+                                    instance dark_mode: 0.0
+                                    instance border_radius: 8.0
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                        let base = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                        let hover_color = mix((SLATE_200), (SLATE_600), self.dark_mode);
+                                        sdf.fill(mix(base, hover_color, self.hover));
+                                        return sdf.result;
+                                    }
+                                }
+
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((MOYOYO_TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Empty state (shown when no voices)
+                        empty_state = <View> {
+                            width: Fill, height: 400
+                            align: {x: 0.5, y: 0.5}
+                            flow: Down
+                            spacing: 16
+                            visible: false
+
+                            empty_icon = <Label> {
+                                width: Fit, height: Fit
+                                draw_text: {
+                                    text_style: { font_size: 64.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return vec4(0.6, 0.6, 0.65, 1.0);
+                                    }
+                                }
+                                text: "🎤"
+                            }
+
+                            empty_text = <Label> {
+                                width: Fit, height: Fit
+                                draw_text: {
+                                    instance dark_mode: 0.0
+                                    text_style: { font_size: 15.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return mix((MOYOYO_TEXT_MUTED), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                    }
+                                }
+                                text: "暂无音色，请先创建自定义音色"
+                            }
+                        }
+
+                        // Voice list using PortalList (direct child, no ScrollYView wrapper)
+                        voice_list = <PortalList> {
+                            width: Fill, height: Fill
+                            flow: Down
+                            spacing: 12
+
+                                    VoiceCard = <RoundedView> {
+                                        width: Fill, height: Fit
+                                        padding: {left: 20, right: 20, top: 16, bottom: 16}
+                                        flow: Right
+                                        spacing: 16
+                                        align: {y: 0.5}
+
+                                        draw_bg: {
+                                            instance dark_mode: 0.0
+                                            instance hover: 0.0
+                                            instance border_radius: 12.0
+                                            fn pixel(self) -> vec4 {
+                                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                let bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                                                let hover_bg = mix(vec4(0.98, 0.98, 0.99, 1.0), (SLATE_700), self.dark_mode);
+                                                sdf.fill(mix(bg, hover_bg, self.hover));
+                                                let border = mix((MOYOYO_BORDER_LIGHT), (SLATE_700), self.dark_mode);
+                                                sdf.stroke(border, 1.0);
+                                                return sdf.result;
+                                            }
+                                        }
+
+                                        avatar = <View> {
+                                            width: 48, height: 48
+                                            show_bg: true
+                                            draw_bg: {
+                                                instance dark_mode: 0.0
+                                                fn pixel(self) -> vec4 {
+                                                    let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                    sdf.circle(24.0, 24.0, 24.0);
+                                                    let bg = mix((MOYOYO_PRIMARY), (PRIMARY_400), self.dark_mode);
+                                                    sdf.fill(bg);
+                                                    return sdf.result;
+                                                }
+                                            }
+                                            align: {x: 0.5, y: 0.5}
+
+                                            avatar_initial = <Label> {
+                                                width: Fit, height: Fit
+                                                draw_text: {
+                                                    text_style: <FONT_BOLD>{ font_size: 18.0 }
+                                                    fn get_color(self) -> vec4 {
+                                                        return (WHITE);
+                                                    }
+                                                }
+                                                text: "D"
+                                            }
+                                        }
+
+                                        voice_info = <View> {
+                                            width: Fill, height: Fit
+                                            flow: Down
+                                            spacing: 4
+
+                                            voice_name = <Label> {
+                                                width: Fit, height: Fit
+                                                draw_text: {
+                                                    instance dark_mode: 0.0
+                                                    text_style: <FONT_SEMIBOLD>{ font_size: 15.0 }
+                                                    fn get_color(self) -> vec4 {
+                                                        return mix((MOYOYO_TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                                    }
+                                                }
+                                                text: "Voice Name"
+                                            }
+
+                                            voice_meta = <View> {
+                                                width: Fit, height: Fit
+                                                flow: Right
+                                                spacing: 12
+
+                                                voice_language = <Label> {
+                                                    width: Fit, height: Fit
+                                                    draw_text: {
+                                                        instance dark_mode: 0.0
+                                                        text_style: { font_size: 12.0 }
+                                                        fn get_color(self) -> vec4 {
+                                                            return mix((MOYOYO_TEXT_MUTED), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                                        }
+                                                    }
+                                                    text: "zh"
+                                                }
+
+                                                voice_type = <Label> {
+                                                    width: Fit, height: Fit
+                                                    draw_text: {
+                                                        instance dark_mode: 0.0
+                                                        text_style: { font_size: 12.0 }
+                                                        fn get_color(self) -> vec4 {
+                                                            return mix((MOYOYO_TEXT_MUTED), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                                        }
+                                                    }
+                                                    text: "Built-in"
+                                                }
+                                            }
+                                        }
+
+                                        actions = <View> {
+                                            width: Fit, height: Fit
+                                            flow: Right
+                                            spacing: 8
+
+                                            preview_btn = <Button> {
+                                                width: Fit, height: 32
+                                                padding: {left: 12, right: 12}
+                                                text: "Preview"
+
+                                                draw_bg: {
+                                                    instance hover: 0.0
+                                                    instance dark_mode: 0.0
+                                                    instance border_radius: 6.0
+                                                    fn pixel(self) -> vec4 {
+                                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                        let base = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                                        let hover_color = mix((SLATE_200), (SLATE_600), self.dark_mode);
+                                                        sdf.fill(mix(base, hover_color, self.hover));
+                                                        return sdf.result;
+                                                    }
+                                                }
+
+                                                draw_text: {
+                                                    instance dark_mode: 0.0
+                                                    text_style: { font_size: 12.0 }
+                                                    fn get_color(self) -> vec4 {
+                                                        return mix((MOYOYO_TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                                    }
+                                                }
+                                            }
+
+                                            delete_btn = <Button> {
+                                                width: Fit, height: 32
+                                                padding: {left: 12, right: 12}
+                                                text: "Delete"
+                                                visible: false
+
+                                                draw_bg: {
+                                                    instance hover: 0.0
+                                                    instance dark_mode: 0.0
+                                                    instance border_radius: 6.0
+                                                    fn pixel(self) -> vec4 {
+                                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                        let base = mix(vec4(0.95, 0.95, 0.96, 1.0), (SLATE_700), self.dark_mode);
+                                                        let hover_color = mix(vec4(0.98, 0.85, 0.85, 1.0), vec4(0.7, 0.3, 0.3, 1.0), self.dark_mode);
+                                                        sdf.fill(mix(base, hover_color, self.hover));
+                                                        return sdf.result;
+                                                    }
+                                                }
+
+                                                draw_text: {
+                                                    instance hover: 0.0
+                                                    instance dark_mode: 0.0
+                                                    text_style: { font_size: 12.0 }
+                                                    fn get_color(self) -> vec4 {
+                                                        let normal = mix((MOYOYO_TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                                                        let hover_color = mix(vec4(0.8, 0.2, 0.2, 1.0), vec4(1.0, 0.4, 0.4, 1.0), self.dark_mode);
+                                                        return mix(normal, hover_color, self.hover);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                    } // End library_page
+
+                    // ============ Voice Clone Page ============
+                    clone_page = <View> {
+                        width: Fill, height: Fill
+                        flow: Down
+                        spacing: 20
+                        visible: false  // Hidden by default
+
+                        // Page header
+                        clone_header = <View> {
+                            width: Fill, height: Fit
+                            flow: Right
+                            align: {y: 0.5}
+                            spacing: 20
+
+                            clone_title_section = <View> {
+                                width: Fit, height: Fit
+                                flow: Right
+                                spacing: 20
+                                align: {y: 0.5}
+
+                                clone_title = <Label> {
+                                    width: Fit, height: Fit
+                                    draw_text: {
+                                        instance dark_mode: 0.0
+                                        text_style: <FONT_SEMIBOLD>{ font_size: 24.0 }
+                                        fn get_color(self) -> vec4 {
+                                            return mix((MOYOYO_TEXT_PRIMARY), (MOYOYO_TEXT_PRIMARY_DARK), self.dark_mode);
+                                        }
+                                    }
+                                    text: "音色克隆"
+                                }
+
+                                // Mode selector (Quick/Advanced)
+                                mode_selector = <View> {
+                                    width: Fit, height: Fit
+                                    flow: Right
+                                    spacing: 0
+                                    padding: {left: 4, right: 4, top: 4, bottom: 4}
+                                    show_bg: true
+                                    draw_bg: {
+                                        instance dark_mode: 0.0
+                                        instance border_radius: 8.0
+                                        fn pixel(self) -> vec4 {
+                                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                            let bg = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                            sdf.fill(bg);
+                                            return sdf.result;
+                                        }
+                                    }
+
+                                    quick_mode_btn = <Button> {
+                                        width: Fit, height: 32
+                                        padding: {left: 16, right: 16}
+                                        text: "快速模式"
+
+                                        draw_bg: {
+                                            instance hover: 0.0
+                                            instance active: 1.0
+                                            instance border_radius: 6.0
+                                            fn pixel(self) -> vec4 {
+                                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                let normal = vec4(0.0, 0.0, 0.0, 0.0);
+                                                let active_color = (WHITE);
+                                                let bg = mix(normal, active_color, self.active);
+                                                sdf.fill(bg);
+                                                return sdf.result;
+                                            }
+                                        }
+
+                                        draw_text: {
+                                            instance active: 1.0
+                                            text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+                                            fn get_color(self) -> vec4 {
+                                                let normal = vec4(0.6, 0.6, 0.65, 1.0);
+                                                let active = (MOYOYO_PRIMARY);
+                                                return mix(normal, active, self.active);
+                                            }
+                                        }
+                                    }
+
+                                    advanced_mode_btn = <Button> {
+                                        width: Fit, height: 32
+                                        padding: {left: 16, right: 16}
+                                        text: "高级模式"
+                                        enabled: false
+
+                                        draw_bg: {
+                                            instance hover: 0.0
+                                            instance active: 0.0
+                                            instance border_radius: 6.0
+                                            fn pixel(self) -> vec4 {
+                                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                let normal = vec4(0.0, 0.0, 0.0, 0.0);
+                                                let active_color = (WHITE);
+                                                let bg = mix(normal, active_color, self.active);
+                                                sdf.fill(bg);
+                                                return sdf.result;
+                                            }
+                                        }
+
+                                        draw_text: {
+                                            instance active: 0.0
+                                            text_style: <FONT_SEMIBOLD>{ font_size: 13.0 }
+                                            fn get_color(self) -> vec4 {
+                                                let normal = vec4(0.6, 0.6, 0.65, 1.0);
+                                                let active = (MOYOYO_PRIMARY);
+                                                return mix(normal, active, self.active);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            <View> { width: Fill, height: 1 }  // Spacer
+
+                            // Create task button
+                            create_task_btn = <Button> {
+                                width: Fit, height: 44
+                                padding: {left: 24, right: 24}
+                                text: "➕ 创建任务"
+
+                                draw_bg: {
+                                    instance hover: 0.0
+                                    instance border_radius: 10.0
+                                    fn pixel(self) -> vec4 {
+                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                        let base = (MOYOYO_PRIMARY);
+                                        let hover_color = (MOYOYO_PRIMARY_LIGHT);
+                                        sdf.fill(mix(base, hover_color, self.hover));
+                                        return sdf.result;
+                                    }
+                                }
+
+                                draw_text: {
+                                    text_style: <FONT_SEMIBOLD>{ font_size: 14.0 }
+                                    fn get_color(self) -> vec4 {
+                                        return (WHITE);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Empty state (shown when no tasks)
+                        clone_empty_state = <View> {
+                                    width: Fill, height: 400
+                                    align: {x: 0.5, y: 0.5}
+                                    flow: Down
+                                    spacing: 16
+                                    visible: false  // Will be shown when no tasks
+
+                                    clone_empty_icon = <Label> {
+                                        width: Fit, height: Fit
+                                        draw_text: {
+                                            text_style: { font_size: 64.0 }
+                                            fn get_color(self) -> vec4 {
+                                                return vec4(0.6, 0.6, 0.65, 1.0);
+                                            }
+                                        }
+                                        text: "📋"
+                                    }
+
+                                    clone_empty_text = <Label> {
+                                        width: Fit, height: Fit
+                                        draw_text: {
+                                            instance dark_mode: 0.0
+                                            text_style: { font_size: 15.0 }
+                                            fn get_color(self) -> vec4 {
+                                                return mix((MOYOYO_TEXT_MUTED), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                            }
+                                        }
+                                        text: "暂无训练任务，点击「创建任务」开始"
+                                    }
+                                }
+
+                                // Task list using PortalList
+                                task_portal_list = <PortalList> {
+                                    width: Fill, height: Fill
+                                    flow: Down
+                                    spacing: 12
+
+                                    TaskCard = <RoundedView> {
+                                        width: Fill, height: Fit
+                                        padding: {left: 20, right: 20, top: 16, bottom: 16}
+                                        flow: Down
+                                        spacing: 12
+
+                                        draw_bg: {
+                                            instance dark_mode: 0.0
+                                            instance hover: 0.0
+                                            instance border_radius: 12.0
+                                            fn pixel(self) -> vec4 {
+                                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                let bg = mix((WHITE), (SLATE_800), self.dark_mode);
+                                                let hover_bg = mix(vec4(0.98, 0.98, 0.99, 1.0), (SLATE_700), self.dark_mode);
+                                                sdf.fill(mix(bg, hover_bg, self.hover));
+                                                let border = mix((MOYOYO_BORDER_LIGHT), (SLATE_700), self.dark_mode);
+                                                sdf.stroke(border, 1.0);
+                                                return sdf.result;
+                                            }
+                                        }
+
+                                        top_row = <View> {
+                                            width: Fill, height: Fit
+                                            flow: Right
+                                            align: {y: 0.5}
+                                            spacing: 12
+
+                                            task_name = <Label> {
+                                                width: Fill, height: Fit
+                                                draw_text: {
+                                                    instance dark_mode: 0.0
+                                                    text_style: <FONT_SEMIBOLD>{ font_size: 15.0 }
+                                                    fn get_color(self) -> vec4 {
+                                                        return mix((MOYOYO_TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                                    }
+                                                }
+                                                text: "Task Name"
+                                            }
+
+                                            status_badge = <View> {
+                                                width: Fit, height: Fit
+                                                padding: {left: 8, right: 8, top: 4, bottom: 4}
+                                                show_bg: true
+                                                draw_bg: {
+                                                    instance status_color: vec4(0.16, 0.65, 0.37, 1.0)
+                                                    instance border_radius: 4.0
+                                                    fn pixel(self) -> vec4 {
+                                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                        sdf.fill(self.status_color);
+                                                        return sdf.result;
+                                                    }
+                                                }
+
+                                                status_label = <Label> {
+                                                    width: Fit, height: Fit
+                                                    draw_text: {
+                                                        text_style: <FONT_SEMIBOLD>{ font_size: 11.0 }
+                                                        fn get_color(self) -> vec4 {
+                                                            return (WHITE);
+                                                        }
+                                                    }
+                                                    text: "Completed"
+                                                }
+                                            }
+                                        }
+
+                                        progress_row = <View> {
+                                            width: Fill, height: Fit
+                                            flow: Down
+                                            spacing: 4
+                                            visible: false
+
+                                            progress_text = <Label> {
+                                                width: Fit, height: Fit
+                                                draw_text: {
+                                                    instance dark_mode: 0.0
+                                                    text_style: { font_size: 12.0 }
+                                                    fn get_color(self) -> vec4 {
+                                                        return mix((MOYOYO_TEXT_MUTED), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                                    }
+                                                }
+                                                text: "Progress: 65%"
+                                            }
+
+                                            progress_bar = <View> {
+                                                width: Fill, height: 6
+                                                show_bg: true
+                                                draw_bg: {
+                                                    instance dark_mode: 0.0
+                                                    instance progress: 0.65
+                                                    instance border_radius: 3.0
+                                                    fn pixel(self) -> vec4 {
+                                                        let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                        sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                        let bg = mix((SLATE_200), (SLATE_700), self.dark_mode);
+                                                        sdf.fill(bg);
+                                                        let progress_width = self.rect_size.x * self.progress;
+                                                        sdf.box(0., 0., progress_width, self.rect_size.y, self.border_radius);
+                                                        sdf.fill((MOYOYO_PRIMARY));
+                                                        return sdf.result;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        bottom_row = <View> {
+                                            width: Fill, height: Fit
+                                            flow: Right
+                                            align: {y: 0.5}
+
+                                            task_meta = <View> {
+                                                width: Fill, height: Fit
+                                                flow: Right
+                                                spacing: 16
+
+                                                created_time = <Label> {
+                                                    width: Fit, height: Fit
+                                                    draw_text: {
+                                                        instance dark_mode: 0.0
+                                                        text_style: { font_size: 12.0 }
+                                                        fn get_color(self) -> vec4 {
+                                                            return mix((MOYOYO_TEXT_MUTED), (TEXT_TERTIARY_DARK), self.dark_mode);
+                                                        }
+                                                    }
+                                                    text: "2024-01-15 10:30"
+                                                }
+                                            }
+
+                                            actions = <View> {
+                                                width: Fit, height: Fit
+                                                flow: Right
+                                                spacing: 8
+
+                                                view_btn = <Button> {
+                                                    width: Fit, height: 32
+                                                    padding: {left: 12, right: 12}
+                                                    text: "View"
+
+                                                    draw_bg: {
+                                                        instance hover: 0.0
+                                                        instance dark_mode: 0.0
+                                                        instance border_radius: 6.0
+                                                        fn pixel(self) -> vec4 {
+                                                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                            let base = mix((SLATE_100), (SLATE_700), self.dark_mode);
+                                                            let hover_color = mix((SLATE_200), (SLATE_600), self.dark_mode);
+                                                            sdf.fill(mix(base, hover_color, self.hover));
+                                                            return sdf.result;
+                                                        }
+                                                    }
+
+                                                    draw_text: {
+                                                        instance dark_mode: 0.0
+                                                        text_style: { font_size: 12.0 }
+                                                        fn get_color(self) -> vec4 {
+                                                            return mix((MOYOYO_TEXT_PRIMARY), (TEXT_PRIMARY_DARK), self.dark_mode);
+                                                        }
+                                                    }
+                                                }
+
+                                                cancel_btn = <Button> {
+                                                    width: Fit, height: 32
+                                                    padding: {left: 12, right: 12}
+                                                    text: "Cancel"
+                                                    visible: false
+
+                                                    draw_bg: {
+                                                        instance hover: 0.0
+                                                        instance dark_mode: 0.0
+                                                        instance border_radius: 6.0
+                                                        fn pixel(self) -> vec4 {
+                                                            let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                                            sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
+                                                            let base = mix(vec4(0.95, 0.95, 0.96, 1.0), (SLATE_700), self.dark_mode);
+                                                            let hover_color = mix(vec4(0.98, 0.85, 0.85, 1.0), vec4(0.7, 0.3, 0.3, 1.0), self.dark_mode);
+                                                            sdf.fill(mix(base, hover_color, self.hover));
+                                                            return sdf.result;
+                                                        }
+                                                    }
+
+                                                    draw_text: {
+                                                        instance hover: 0.0
+                                                        instance dark_mode: 0.0
+                                                        text_style: { font_size: 12.0 }
+                                                        fn get_color(self) -> vec4 {
+                                                            let normal = mix((MOYOYO_TEXT_SECONDARY), (TEXT_SECONDARY_DARK), self.dark_mode);
+                                                            let hover_color = mix(vec4(0.8, 0.2, 0.2, 1.0), vec4(1.0, 0.4, 0.4, 1.0), self.dark_mode);
+                                                            return mix(normal, hover_color, self.hover);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                    } // End clone_page
+                } // End content_area
+            } // End left_column
 
             // Splitter handle for resizing - hidden in MoYoYo.tts style
             splitter = <Splitter> {
@@ -951,7 +1805,7 @@ live_design! {
                             instance hover: 0.0
                             instance pressed: 0.0
                             instance dark_mode: 0.0
-                            border_radius: 4.0
+                            instance border_radius: 4.0
                             fn pixel(self) -> vec4 {
                                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                                 sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -971,7 +1825,7 @@ live_design! {
                     width: Fill, height: Fill
                     draw_bg: {
                         instance dark_mode: 0.0
-                        border_radius: 12.0
+                        instance border_radius: 12.0
                         fn pixel(self) -> vec4 {
                             let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                             sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -1027,7 +1881,7 @@ live_design! {
                                 draw_bg: {
                                     instance dark_mode: 0.0
                                     instance hover: 0.0
-                                    border_radius: 6.0
+                                    instance border_radius: 6.0
                                     fn pixel(self) -> vec4 {
                                         let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                                         sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -1086,17 +1940,17 @@ live_design! {
                     }
                 }
             }
-        }
+            } // End main_content
 
-        // Bottom audio player bar - MoYoYo.tts style
-        audio_player_bar = <View> {
-            width: Fill, height: 90
-            flow: Right
-            align: {x: 0.5, y: 0.5}
-            padding: {left: 24, right: 24, top: 8, bottom: 8}
-            spacing: 0
+            // Bottom audio player bar - MoYoYo.tts style
+            audio_player_bar = <View> {
+                width: Fill, height: 90
+                flow: Right
+                align: {x: 0.5, y: 0.5}
+                padding: {left: 24, right: 24, top: 8, bottom: 8}
+                spacing: 0
 
-            show_bg: true
+                show_bg: true
             draw_bg: {
                 instance dark_mode: 0.0
                 fn pixel(self) -> vec4 {
@@ -1125,7 +1979,7 @@ live_design! {
                     width: 48, height: 48
                     align: {x: 0.5, y: 0.5}
                     draw_bg: {
-                        border_radius: 10.0
+                        instance border_radius: 10.0
                         fn pixel(self) -> vec4 {
                             let sdf = Sdf2d::viewport(self.pos * self.rect_size);
                             sdf.box(0., 0., self.rect_size.x, self.rect_size.y, self.border_radius);
@@ -1316,7 +2170,7 @@ live_design! {
                     }
                 }
             }
-        }
+            } // End audio_player_bar
         } // End content_wrapper
         } // End app_layout
 
@@ -1326,6 +2180,9 @@ live_design! {
         // Confirm delete modal (overlay)
         confirm_delete_modal = <ConfirmDeleteModal> {}
 
+        // Confirm cancel task modal (overlay)
+        confirm_cancel_modal = <ConfirmCancelModal> {}
+
         // Toast notification (top center overlay)
         toast_overlay = <View> {
             width: Fill, height: Fill
@@ -1333,6 +2190,119 @@ live_design! {
             padding: {top: 80}
 
             download_toast = <Toast> {}
+        }
+
+        // Loading overlay - shown while dataflow is initializing
+        loading_overlay = <View> {
+            width: Fill, height: Fill
+            align: {x: 0.5, y: 0.5}
+            visible: true
+
+            show_bg: true
+            draw_bg: {
+                fn pixel(self) -> vec4 {
+                    // Match sidebar gradient style
+                    let gradient = mix(
+                        vec4(0.157, 0.196, 0.255, 1.0),  // #283041
+                        vec4(0.122, 0.153, 0.200, 1.0),  // #1f2733
+                        self.pos.y
+                    );
+                    return gradient;
+                }
+            }
+
+            loading_content = <View> {
+                width: Fit, height: Fit
+                flow: Down
+                spacing: 24
+                align: {x: 0.5, y: 0.5}
+
+                // App logo/name
+                loading_logo = <View> {
+                    width: Fit, height: Fit
+                    flow: Down
+                    spacing: 12
+                    align: {x: 0.5}
+
+                    loading_title = <Label> {
+                        width: Fit, height: Fit
+                        draw_text: {
+                            text_style: <FONT_BOLD>{ font_size: 28.0 }
+                            fn get_color(self) -> vec4 {
+                                return (WHITE);
+                            }
+                        }
+                        text: "Moxin TTS"
+                    }
+
+                    loading_subtitle = <Label> {
+                        width: Fit, height: Fit
+                        draw_text: {
+                            text_style: { font_size: 13.0 }
+                            fn get_color(self) -> vec4 {
+                                return vec4(0.7, 0.7, 0.75, 1.0);
+                            }
+                        }
+                        text: "Voice Cloning & Text-to-Speech"
+                    }
+                }
+
+                // Spinner area
+                loading_spinner_area = <View> {
+                    width: Fit, height: Fit
+                    align: {x: 0.5}
+
+                    loading_spinner = <View> {
+                        width: 40, height: 40
+                        show_bg: true
+                        draw_bg: {
+                            instance phase: 0.0
+                            fn pixel(self) -> vec4 {
+                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                                let cx = self.rect_size.x * 0.5;
+                                let cy = self.rect_size.y * 0.5;
+                                let radius = min(cx, cy) - 4.0;
+                                let pi = 3.141592653589793;
+
+                                // Background track ring
+                                sdf.circle(cx, cy, radius);
+                                sdf.stroke(vec4(1.0, 1.0, 1.0, 0.15), 3.0);
+
+                                // Spinning arc (270 degrees)
+                                let start = self.phase * 2.0 * pi;
+                                let end = start + pi * 1.5;
+                                sdf.arc_round_caps(cx, cy, radius, start, end, 3.0);
+                                sdf.fill(vec4(0.39, 0.40, 0.95, 1.0));
+
+                                return sdf.result;
+                            }
+                        }
+                    }
+                }
+
+                // Status text
+                loading_status = <Label> {
+                    width: Fit, height: Fit
+                    draw_text: {
+                        text_style: <FONT_SEMIBOLD>{ font_size: 14.0 }
+                        fn get_color(self) -> vec4 {
+                            return vec4(0.8, 0.8, 0.85, 1.0);
+                        }
+                    }
+                    text: "Initializing..."
+                }
+
+                loading_detail = <Label> {
+                    width: Fit, height: Fit
+                    draw_text: {
+                        text_style: { font_size: 12.0 }
+                        fn get_color(self) -> vec4 {
+                            return vec4(0.55, 0.55, 0.6, 1.0);
+                        }
+                    }
+                    text: "Starting TTS dataflow engine"
+                }
+            }
         }
     }
 }
@@ -1400,7 +2370,51 @@ pub struct TTSScreen {
     pending_delete_voice_id: Option<String>,
     #[rust]
     pending_delete_voice_name: Option<String>,
+
+    // Cancel task confirmation state
+    #[rust]
+    pending_cancel_task_id: Option<String>,
+    #[rust]
+    pending_cancel_task_name: Option<String>,
+
+    // Current page state
+    #[rust]
+    current_page: AppPage,
+
+    // Voice Library page state
+    #[rust]
+    library_voices: Vec<Voice>,
+    #[rust]
+    library_search_query: String,
+    #[rust]
+    library_loading: bool,
+    #[rust]
+    library_card_areas: Vec<(usize, Area, Area, Area)>, // (voice_idx, card_area, preview_btn_area, delete_btn_area)
+
+    // Voice Clone page state
+    #[rust]
+    clone_tasks: Vec<CloneTask>,
+    #[rust]
+    clone_loading: bool,
+    #[rust]
+    clone_card_areas: Vec<(usize, Area, Area, Area)>, // (task_idx, card_area, view_btn_area, cancel_btn_area)
+    
+    // Task Detail page state
+    #[rust]
+    current_task_id: Option<String>,
+
+    #[rust]
+    dora_started: bool,
+
+    #[rust]
+    loading_dismissed: bool,
+
+    #[rust]
+    spinner_phase: f64,
 }
+
+// Import CloneTask and CloneTaskStatus from task_persistence
+use crate::task_persistence::{CloneTask, CloneTaskStatus};
 
 impl Widget for TTSScreen {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
@@ -1425,6 +2439,24 @@ impl Widget for TTSScreen {
             self.stored_audio_sample_rate = 32000;
             // Initialize voice name
             self.current_voice_name = "Doubao".to_string();
+            // Initialize current page
+            self.current_page = AppPage::TextToSpeech;
+            
+            // Initialize voice library state
+            self.library_voices = Vec::new();
+            self.library_search_query = String::new();
+            self.library_loading = false;
+            self.library_card_areas = Vec::new();
+            
+            // Initialize clone tasks state
+            self.clone_tasks = Vec::new();
+            self.clone_loading = false;
+            self.clone_card_areas = Vec::new();
+            
+            // Load initial data
+            self.load_voice_library(cx);
+            self.load_clone_tasks(cx);
+            
             // Add initial log entries
             self.log_entries
                 .push("[INFO] [tts] MoFA TTS initialized".to_string());
@@ -1460,10 +2492,15 @@ impl Widget for TTSScreen {
                 .apply_over(cx, live! { width: 0 });
         }
 
-        // Initialize Dora (lazy, now controlled by MofaHero)
+        // Initialize Dora and auto-start dataflow
         if self.dora.is_none() {
             let dora = DoraIntegration::new();
             self.dora = Some(dora);
+        }
+
+        if !self.dora_started {
+            self.dora_started = true;
+            self.auto_start_dataflow(cx);
         }
 
         // Pass SharedDoraState to voice clone modal
@@ -1563,19 +2600,225 @@ impl Widget for TTSScreen {
                 }
                 self.update_log_display(cx);
             }
+
+            // Update loading overlay
+            if !self.loading_dismissed {
+                // Animate spinner
+                self.spinner_phase += 0.03;
+                if self.spinner_phase > 1.0 {
+                    self.spinner_phase -= 1.0;
+                }
+                self.view.view(ids!(loading_overlay.loading_content.loading_spinner_area.loading_spinner))
+                    .apply_over(cx, live! { draw_bg: { phase: (self.spinner_phase) } });
+
+                // Update status text based on dora state
+                let is_running = self.dora.as_ref().map(|d| d.is_running()).unwrap_or(false);
+                if is_running {
+                    self.view.label(ids!(loading_overlay.loading_content.loading_status))
+                        .set_text(cx, "Connected");
+                    self.view.label(ids!(loading_overlay.loading_content.loading_detail))
+                        .set_text(cx, "TTS engine ready");
+                    // Dismiss loading overlay
+                    self.loading_dismissed = true;
+                    self.view.view(ids!(loading_overlay)).set_visible(cx, false);
+                    self.view.redraw(cx);
+                    self.add_log(cx, "[INFO] [tts] Dataflow connected, UI ready");
+                } else {
+                    self.view.label(ids!(loading_overlay.loading_content.loading_status))
+                        .set_text(cx, "Connecting...");
+                    self.view.label(ids!(loading_overlay.loading_content.loading_detail))
+                        .set_text(cx, "Starting TTS dataflow engine");
+                }
+
+                self.view.redraw(cx);
+            }
         }
 
-        // Handle MofaHero Actions (Start/Stop)
-        // Note: actions are already captured at the beginning of handle_event
-        for action in &actions {
-            match action.as_widget_action().cast() {
-                MofaHeroAction::StartClicked => {
-                    self.start_dora(cx);
+        // MofaHero actions not used in MoYoYo UI (dataflow auto-starts)
+
+        // Handle navigation button clicks
+        if self
+            .view
+            .button(ids!(app_layout.sidebar.sidebar_nav.nav_tts))
+            .clicked(&actions)
+        {
+            self.switch_page(cx, AppPage::TextToSpeech);
+        }
+
+        if self
+            .view
+            .button(ids!(app_layout.sidebar.sidebar_nav.nav_library))
+            .clicked(&actions)
+        {
+            self.switch_page(cx, AppPage::VoiceLibrary);
+        }
+
+        if self
+            .view
+            .button(ids!(app_layout.sidebar.sidebar_nav.nav_clone))
+            .clicked(&actions)
+        {
+            self.switch_page(cx, AppPage::VoiceClone);
+        }
+
+        // Handle Voice Library page buttons
+        if self
+            .view
+            .button(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .library_page
+                    .library_header
+                    .refresh_btn
+            ))
+            .clicked(&actions)
+        {
+            self.refresh_voice_library(cx);
+        }
+
+        // Handle Voice Library search input
+        if let Some(search_text) = self
+            .view
+            .text_input(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .library_page
+                    .library_header
+                    .search_input
+            ))
+            .changed(&actions)
+        {
+            self.library_search_query = search_text;
+            self.update_library_display(cx);
+            self.add_log(cx, &format!("[INFO] [library] Search query: {}", self.library_search_query));
+        }
+
+        // Handle Voice Clone page buttons
+        if self
+            .view
+            .button(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .clone_page
+                    .clone_header
+                    .create_task_btn
+            ))
+            .clicked(&actions)
+        {
+            // Show the voice clone modal
+            self.view
+                .voice_clone_modal(ids!(voice_clone_modal))
+                .show(cx);
+            self.add_log(cx, "[INFO] [clone] Opening create task dialog...");
+        }
+
+        // Handle confirm delete modal buttons
+        if self
+            .view
+            .button(ids!(confirm_delete_modal.dialog.footer.confirm_btn))
+            .clicked(&actions)
+        {
+            // User confirmed deletion
+            if let Some(voice_id) = self.pending_delete_voice_id.take() {
+                self.delete_voice(cx, voice_id);
+                // Hide dialog
+                self.view
+                    .view(ids!(confirm_delete_modal))
+                    .set_visible(cx, false);
+            }
+            self.pending_delete_voice_name = None;
+        }
+
+        if self
+            .view
+            .button(ids!(confirm_delete_modal.dialog.footer.cancel_btn))
+            .clicked(&actions)
+        {
+            // User cancelled deletion
+            self.pending_delete_voice_id = None;
+            self.pending_delete_voice_name = None;
+            // Hide dialog
+            self.view
+                .view(ids!(confirm_delete_modal))
+                .set_visible(cx, false);
+            self.add_log(cx, "[INFO] [library] Delete cancelled");
+        }
+
+        // Handle Voice Library card button clicks using stored areas
+        let filtered_voices = self.get_filtered_voices();
+        for (voice_idx, _card_area, preview_btn_area, delete_btn_area) in self.library_card_areas.clone() {
+            if voice_idx >= filtered_voices.len() {
+                continue;
+            }
+            
+            let voice = &filtered_voices[voice_idx];
+            
+            // Check preview button click
+            match event.hits(cx, preview_btn_area) {
+                Hit::FingerUp(fe) if fe.was_tap() => {
+                    self.preview_voice(cx, voice.id.clone());
                 }
-                MofaHeroAction::StopClicked => {
-                    self.stop_dora(cx);
+                _ => {}
+            }
+            
+            // Check delete button click (only for custom voices)
+            if voice.source != crate::voice_data::VoiceSource::Builtin {
+                match event.hits(cx, delete_btn_area) {
+                    Hit::FingerUp(fe) if fe.was_tap() => {
+                        // Show confirmation dialog
+                        self.pending_delete_voice_id = Some(voice.id.clone());
+                        self.pending_delete_voice_name = Some(voice.name.clone());
+                        
+                        // Update dialog with voice name
+                        self.view
+                            .label(ids!(confirm_delete_modal.dialog.header.voice_name))
+                            .set_text(cx, &format!("\"{}\"", voice.name));
+                        
+                        // Show dialog
+                        self.view
+                            .view(ids!(confirm_delete_modal))
+                            .set_visible(cx, true);
+                        
+                        self.add_log(cx, &format!("[INFO] [library] Requesting delete confirmation for: {}", voice.name));
+                    }
+                    _ => {}
                 }
-                MofaHeroAction::None => {}
+            }
+        }
+
+        // Handle Clone Task card button clicks using stored areas
+        for (task_idx, _card_area, view_btn_area, cancel_btn_area) in self.clone_card_areas.clone() {
+            if task_idx >= self.clone_tasks.len() {
+                continue;
+            }
+            
+            let task = &self.clone_tasks[task_idx];
+            let task_id = task.id.clone();
+            let task_name = task.name.clone();
+            let task_status = task.status.clone();
+            
+            // Check view button click
+            match event.hits(cx, view_btn_area) {
+                Hit::FingerUp(fe) if fe.was_tap() => {
+                    self.view_clone_task(cx, task_id.clone());
+                }
+                _ => {}
+            }
+            
+            // Check cancel button click (only for processing/pending tasks)
+            if task_status == CloneTaskStatus::Processing || task_status == CloneTaskStatus::Pending {
+                match event.hits(cx, cancel_btn_area) {
+                    Hit::FingerUp(fe) if fe.was_tap() => {
+                        self.show_cancel_task_confirmation(cx, task_id.clone(), task_name.clone());
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -1612,15 +2855,11 @@ impl Widget for TTSScreen {
                     self.handle_preview_request(cx, &voice_id);
                 }
                 VoiceSelectorAction::RequestStartDora => {
-                    // Show toast warning - user must start dora first
-                    self.show_toast(
-                        cx,
-                        "Please click 'Start' button first to initialize the dataflow",
-                    );
-                    self.add_log(
-                        cx,
-                        "[WARN] [tts] Dora dataflow must be started before cloning voices",
-                    );
+                    // Dataflow auto-starts in MoYoYo UI; show status if not ready yet
+                    let is_running = self.dora.as_ref().map(|d| d.is_running()).unwrap_or(false);
+                    if !is_running {
+                        self.show_toast(cx, "Dataflow is still connecting, please wait...");
+                    }
                 }
                 VoiceSelectorAction::CloneVoiceClicked => {
                     // Show the voice clone modal
@@ -1806,6 +3045,56 @@ impl Widget for TTSScreen {
             }
         }
 
+        // Handle confirm cancel task modal
+        {
+            if self
+                .view
+                .button(ids!(confirm_cancel_modal.dialog.footer.confirm_btn))
+                .clicked(&actions)
+            {
+                // User confirmed - cancel the task
+                if let Some(task_id) = self.pending_cancel_task_id.take() {
+                    self.cancel_clone_task(cx, task_id);
+                }
+                self.pending_cancel_task_name = None;
+                // Hide modal
+                self.view
+                    .view(ids!(confirm_cancel_modal))
+                    .set_visible(cx, false);
+                self.view.redraw(cx);
+            }
+
+            if self
+                .view
+                .button(ids!(confirm_cancel_modal.dialog.footer.back_btn))
+                .clicked(&actions)
+            {
+                // User cancelled - just hide dialog
+                self.pending_cancel_task_id = None;
+                self.pending_cancel_task_name = None;
+                self.view
+                    .view(ids!(confirm_cancel_modal))
+                    .set_visible(cx, false);
+                self.add_log(cx, "[INFO] [clone] Cancel task cancelled");
+                self.view.redraw(cx);
+            }
+
+            // Click backdrop to close dialog
+            if self
+                .view
+                .view(ids!(confirm_cancel_modal.backdrop))
+                .finger_up(&actions)
+                .is_some()
+            {
+                self.pending_cancel_task_id = None;
+                self.pending_cancel_task_name = None;
+                self.view
+                    .view(ids!(confirm_cancel_modal))
+                    .set_visible(cx, false);
+                self.view.redraw(cx);
+            }
+        }
+
         // Handle text input changes
         if self
             .view
@@ -1961,7 +3250,126 @@ impl Widget for TTSScreen {
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        self.view.draw_walk(cx, scope, walk)
+        // Clear card areas before redrawing
+        self.library_card_areas.clear();
+        self.clone_card_areas.clear();
+
+        // Get UIDs of our two PortalLists using full paths to avoid name collisions
+        let voice_list_uid = self.view.portal_list(ids!(
+            content_wrapper.main_content.left_column.content_area.library_page.voice_list
+        )).widget_uid();
+        let task_list_uid = self.view.portal_list(ids!(
+            content_wrapper.main_content.left_column.content_area.clone_page.task_portal_list
+        )).widget_uid();
+
+        // Draw PortalLists
+        while let Some(item) = self.view.draw_walk(cx, scope, walk).step() {
+            if let Some(mut list) = item.as_portal_list().borrow_mut() {
+                let list_id = list.widget_uid();
+                eprintln!("[DEBUG] PortalList yielded: uid={:?}, voice_list_uid={:?}, task_list_uid={:?}", list_id, voice_list_uid, task_list_uid);
+
+                if list_id == voice_list_uid {
+                    // Render voice cards
+                    let filtered_voices = self.get_filtered_voices();
+                    eprintln!("[DEBUG] voice_list draw_walk: {} filtered voices, library_voices={}", filtered_voices.len(), self.library_voices.len());
+                    list.set_item_range(cx, 0, filtered_voices.len());
+
+                    while let Some(item_id) = list.next_visible_item(cx) {
+                        if item_id < filtered_voices.len() {
+                            let voice = &filtered_voices[item_id];
+                            let initial = voice.name.chars().next().unwrap_or('?').to_string();
+                            let name = voice.name.clone();
+                            let language = voice.language.clone();
+                            let source = voice.source.clone();
+                            let type_text = match source {
+                                crate::voice_data::VoiceSource::Builtin => "Built-in",
+                                crate::voice_data::VoiceSource::Custom => "Custom",
+                                crate::voice_data::VoiceSource::Trained => "Trained",
+                            };
+                            let is_custom = source != crate::voice_data::VoiceSource::Builtin;
+                            let dark_mode = self.dark_mode;
+
+                            let card = list.item(cx, item_id, live_id!(VoiceCard));
+
+                            // Set voice data
+                            card.label(ids!(avatar.avatar_initial)).set_text(cx, &initial);
+                            card.label(ids!(voice_info.voice_name)).set_text(cx, &name);
+                            card.label(ids!(voice_info.voice_meta.voice_language)).set_text(cx, &language);
+                            card.label(ids!(voice_info.voice_meta.voice_type)).set_text(cx, type_text);
+
+                            // Apply dark mode
+                            card.apply_over(cx, live! {
+                                draw_bg: { dark_mode: (dark_mode) }
+                            });
+
+                            // Show delete button only for custom/trained voices
+                            card.button(ids!(actions.delete_btn)).set_visible(cx, is_custom);
+
+                            // Draw the card
+                            card.draw_all(cx, &mut Scope::empty());
+
+                            // Store card areas for hit testing
+                            // (areas are valid after draw_all)
+                        }
+                    }
+                } else if list_id == task_list_uid {
+                    // Render task cards
+                    let task_count = self.clone_tasks.len();
+                    list.set_item_range(cx, 0, task_count);
+
+                    while let Some(item_id) = list.next_visible_item(cx) {
+                        if item_id < task_count {
+                            // Clone data before borrowing card
+                            let task_name = self.clone_tasks[item_id].name.clone();
+                            let task_status = self.clone_tasks[item_id].status.clone();
+                            let task_progress = self.clone_tasks[item_id].progress;
+                            let task_created = self.clone_tasks[item_id].created_at.clone();
+                            let dark_mode = self.dark_mode;
+
+                            let (status_text, status_color) = match task_status {
+                                CloneTaskStatus::Completed => ("Completed", vec4(0.16, 0.65, 0.37, 1.0)),
+                                CloneTaskStatus::Processing => ("Processing", vec4(0.39, 0.40, 0.95, 1.0)),
+                                CloneTaskStatus::Pending => ("Pending", vec4(0.6, 0.6, 0.65, 1.0)),
+                                CloneTaskStatus::Failed => ("Failed", vec4(0.8, 0.2, 0.2, 1.0)),
+                                CloneTaskStatus::Cancelled => ("Cancelled", vec4(0.5, 0.5, 0.5, 1.0)),
+                            };
+
+                            let card = list.item(cx, item_id, live_id!(TaskCard));
+
+                            card.label(ids!(top_row.task_name)).set_text(cx, &task_name);
+                            card.label(ids!(top_row.status_badge.status_label)).set_text(cx, status_text);
+                            card.view(ids!(top_row.status_badge)).apply_over(cx, live! {
+                                draw_bg: { status_color: (status_color) }
+                            });
+
+                            let show_progress = task_status == CloneTaskStatus::Processing;
+                            card.view(ids!(progress_row)).set_visible(cx, show_progress);
+                            if show_progress {
+                                let progress_text = format!("Progress: {:.0}%", task_progress * 100.0);
+                                card.label(ids!(progress_row.progress_text)).set_text(cx, &progress_text);
+                                card.view(ids!(progress_row.progress_bar)).apply_over(cx, live! {
+                                    draw_bg: { progress: (task_progress as f64) }
+                                });
+                            }
+
+                            card.label(ids!(bottom_row.task_meta.created_time)).set_text(cx, &task_created);
+
+                            let can_cancel = task_status == CloneTaskStatus::Processing || task_status == CloneTaskStatus::Pending;
+                            card.button(ids!(bottom_row.actions.cancel_btn)).set_visible(cx, can_cancel);
+
+                            card.apply_over(cx, live! {
+                                draw_bg: { dark_mode: (dark_mode) }
+                            });
+
+                            // Draw the card
+                            card.draw_all(cx, &mut Scope::empty());
+                        }
+                    }
+                }
+            }
+        }
+        
+        DrawStep::done()
     }
 }
 
@@ -1969,6 +3377,90 @@ impl TTSScreen {
     fn add_log(&mut self, cx: &mut Cx, message: &str) {
         self.log_entries.push(message.to_string());
         self.update_log_display(cx);
+    }
+
+    /// Switch to a different page and update UI accordingly
+    fn switch_page(&mut self, cx: &mut Cx, page: AppPage) {
+        if self.current_page == page {
+            return; // Already on this page
+        }
+
+        self.current_page = page;
+        self.add_log(cx, &format!("[INFO] [ui] Switching to {:?} page", page));
+
+        // Update navigation button states
+        let (tts_active, library_active, clone_active) = match page {
+            AppPage::TextToSpeech => (1.0, 0.0, 0.0),
+            AppPage::VoiceLibrary => (0.0, 1.0, 0.0),
+            AppPage::VoiceClone | AppPage::TaskDetail => (0.0, 0.0, 1.0),
+        };
+
+        self.view
+            .button(ids!(app_layout.sidebar.sidebar_nav.nav_tts))
+            .apply_over(
+                cx,
+                live! {
+                    draw_bg: { active: (tts_active) }
+                    draw_text: { active: (tts_active) }
+                },
+            );
+
+        self.view
+            .button(ids!(app_layout.sidebar.sidebar_nav.nav_library))
+            .apply_over(
+                cx,
+                live! {
+                    draw_bg: { active: (library_active) }
+                    draw_text: { active: (library_active) }
+                },
+            );
+
+        self.view
+            .button(ids!(app_layout.sidebar.sidebar_nav.nav_clone))
+            .apply_over(
+                cx,
+                live! {
+                    draw_bg: { active: (clone_active) }
+                    draw_text: { active: (clone_active) }
+                },
+            );
+
+        // Show/hide page content based on current_page
+        let show_tts = page == AppPage::TextToSpeech;
+        let show_library = page == AppPage::VoiceLibrary;
+        let show_clone = page == AppPage::VoiceClone;
+
+        self.view
+            .view(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .tts_page
+            ))
+            .set_visible(cx, show_tts);
+
+        self.view
+            .view(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .library_page
+            ))
+            .set_visible(cx, show_library);
+
+        self.view
+            .view(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .clone_page
+            ))
+            .set_visible(cx, show_clone);
+
+        self.view.redraw(cx);
     }
 
     fn update_delete_modal_dark_mode(&mut self, cx: &mut Cx) {
@@ -2513,142 +4005,39 @@ impl TTSScreen {
         self.view.redraw(cx);
     }
 
-    fn start_dora(&mut self, cx: &mut Cx) {
-        // Check if dora exists and is not running
+    fn auto_start_dataflow(&mut self, cx: &mut Cx) {
         let should_start = self.dora.as_ref().map(|d| !d.is_running()).unwrap_or(false);
-
         if !should_start {
             return;
         }
 
         let dataflow_path = PathBuf::from("apps/mofa-tts/dataflow/tts.yml");
         if !dataflow_path.exists() {
-            self.log_entries.push(
-                "[ERROR] [tts] Dataflow file not found: apps/mofa-tts/dataflow/tts.yml".to_string(),
-            );
-            self.update_log_display(cx);
-            self.view
-                .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
-                .set_connection_status(cx, ConnectionStatus::Failed);
+            self.add_log(cx, "[ERROR] [tts] Dataflow file not found: apps/mofa-tts/dataflow/tts.yml");
             return;
         }
 
-        self.log_entries
-            .push("[INFO] [tts] Starting TTS dataflow...".to_string());
-        self.update_log_display(cx);
+        self.add_log(cx, "[INFO] [tts] Auto-starting TTS dataflow...");
 
-        // Start dora
         if let Some(dora) = &mut self.dora {
             dora.start_dataflow(dataflow_path);
         }
 
-        self.view
-            .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
-            .set_running(cx, true);
-        self.view
-            .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
-            .set_connection_status(cx, ConnectionStatus::Connecting);
-
-        self.log_entries
-            .push("[INFO] [tts] Dataflow started, connecting...".to_string());
-        self.update_log_display(cx);
-
-        self.view
-            .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
-            .set_connection_status(cx, ConnectionStatus::Connected);
-
-        self.log_entries
-            .push("[INFO] [tts] Connected to MoFA bridge".to_string());
-        self.update_log_display(cx);
-
-        // Update voice selector dora running state
-        let voice_selector = self.view.voice_selector(ids!(
-            content_wrapper
-                .main_content
-                .left_column
-                .content_area
-                .controls_panel
-                .voice_section
-                .voice_selector
-        ));
-        voice_selector.set_dora_running(cx, true);
-
-        // Enable generate button
-        self.view
-            .button(ids!(
-                content_wrapper
-                    .main_content
-                    .left_column
-                    .content_area
-                    .input_section
-                    .bottom_bar
-                    .generate_section
-                    .generate_btn
-            ))
-            .apply_over(
-                cx,
-                live! {
-                    draw_bg: { disabled: 0.0 }
-                },
-            );
+        self.add_log(cx, "[INFO] [tts] Dataflow started, connecting...");
     }
 
     fn stop_dora(&mut self, cx: &mut Cx) {
-        // Check if dora exists
         if self.dora.is_none() {
             return;
         }
 
-        self.log_entries
-            .push("[INFO] [tts] Stopping TTS dataflow...".to_string());
-        self.update_log_display(cx);
+        self.add_log(cx, "[INFO] [tts] Stopping TTS dataflow...");
 
-        // Stop dora
         if let Some(dora) = &mut self.dora {
             dora.stop_dataflow();
         }
 
-        self.view
-            .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
-            .set_running(cx, false);
-        self.view
-            .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
-            .set_connection_status(cx, ConnectionStatus::Stopped);
-
-        self.log_entries
-            .push("[INFO] [tts] Dataflow stopped".to_string());
-        self.update_log_display(cx);
-
-        // Update voice selector dora running state
-        let voice_selector = self.view.voice_selector(ids!(
-            content_wrapper
-                .main_content
-                .left_column
-                .content_area
-                .controls_panel
-                .voice_section
-                .voice_selector
-        ));
-        voice_selector.set_dora_running(cx, false);
-
-        // Disable generate button
-        self.view
-            .button(ids!(
-                content_wrapper
-                    .main_content
-                    .left_column
-                    .content_area
-                    .input_section
-                    .bottom_bar
-                    .generate_section
-                    .generate_btn
-            ))
-            .apply_over(
-                cx,
-                live! {
-                    draw_bg: { disabled: 1.0 }
-                },
-            );
+        self.add_log(cx, "[INFO] [tts] Dataflow stopped");
     }
 
     fn generate_speech(&mut self, cx: &mut Cx) {
@@ -2800,9 +4189,10 @@ impl TTSScreen {
             format!("VOICE:{}|{}", voice_id, text)
         };
 
-        // Debug: log the formatted prompt
-        let prompt_preview = if prompt.len() > 150 {
-            format!("{}...", &prompt[..150])
+        // Debug: log the formatted prompt (use char boundary safe truncation)
+        let prompt_preview = if prompt.chars().count() > 100 {
+            let end: usize = prompt.char_indices().nth(100).map(|(i, _)| i).unwrap_or(prompt.len());
+            format!("{}...", &prompt[..end])
         } else {
             prompt.clone()
         };
@@ -2973,6 +4363,334 @@ impl TTSScreen {
 
         Ok(())
     }
+
+    // ============ Voice Library Methods ============
+
+    /// Load voice library from disk
+    fn load_voice_library(&mut self, cx: &mut Cx) {
+        self.library_loading = true;
+        self.add_log(cx, "[INFO] [library] Loading voice library...");
+
+        // Load builtin voices
+        let mut voices = crate::voice_data::get_builtin_voices();
+        let builtin_count = voices.len();
+
+        // Load custom/trained voices from disk
+        let custom_voices = crate::voice_persistence::load_custom_voices();
+        let custom_count = custom_voices.len();
+        voices.extend(custom_voices);
+
+        self.library_voices = voices;
+        self.library_loading = false;
+
+        self.add_log(cx, &format!(
+            "[INFO] [library] Loaded {} voices ({} builtin, {} custom/trained)",
+            self.library_voices.len(), builtin_count, custom_count
+        ));
+        self.update_library_display(cx);
+    }
+
+    /// Refresh voice library
+    fn refresh_voice_library(&mut self, cx: &mut Cx) {
+        self.load_voice_library(cx);
+        self.show_toast(cx, "Voice library refreshed");
+    }
+
+    /// Filter voices based on search query
+    fn get_filtered_voices(&self) -> Vec<Voice> {
+        if self.library_search_query.is_empty() {
+            self.library_voices.clone()
+        } else {
+            let query = self.library_search_query.to_lowercase();
+            self.library_voices
+                .iter()
+                .filter(|v| {
+                    v.name.to_lowercase().contains(&query)
+                        || v.language.to_lowercase().contains(&query)
+                })
+                .cloned()
+                .collect()
+        }
+    }
+
+    /// Update library display
+    fn update_library_display(&mut self, cx: &mut Cx) {
+        let filtered = self.get_filtered_voices();
+        let total_count = self.library_voices.len();
+        let filtered_count = filtered.len();
+        
+        // Update empty state visibility
+        let is_empty = filtered.is_empty();
+        self.view
+            .view(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .library_page
+                    .empty_state
+            ))
+            .set_visible(cx, is_empty);
+
+        // Update empty state text based on whether it's a search result or truly empty
+        if is_empty {
+            let empty_text = if self.library_search_query.is_empty() {
+                "暂无音色，点击「刷新」加载"
+            } else {
+                "未找到匹配的音色"
+            };
+            self.view
+                .label(ids!(
+                    content_wrapper
+                        .main_content
+                        .left_column
+                        .content_area
+                        .library_page
+                        .empty_state
+                        .empty_text
+                ))
+                .set_text(cx, empty_text);
+        }
+
+        // Log the display status
+        if self.library_search_query.is_empty() {
+            self.add_log(cx, &format!("[INFO] [library] Displaying {} voices", filtered_count));
+        } else {
+            self.add_log(cx, &format!(
+                "[INFO] [library] Search results: {} of {} voices match '{}'",
+                filtered_count, total_count, self.library_search_query
+            ));
+        }
+
+        // Show/hide voice_list vs empty_state
+        self.view
+            .portal_list(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .library_page
+                    .voice_list
+            ))
+            .set_visible(cx, !is_empty);
+
+        // Trigger redraw so PortalList re-renders
+        self.view.redraw(cx);
+    }
+
+    /// Delete a voice
+    fn delete_voice(&mut self, cx: &mut Cx, voice_id: String) {
+        self.add_log(cx, &format!("[INFO] [library] Deleting voice: {}", voice_id));
+
+        // Check if it's a custom/trained voice (only those can be deleted from disk)
+        let is_custom = self.library_voices.iter()
+            .find(|v| v.id == voice_id)
+            .map(|v| v.source != crate::voice_data::VoiceSource::Builtin)
+            .unwrap_or(false);
+
+        // Remove from in-memory list
+        self.library_voices.retain(|v| v.id != voice_id);
+
+        // Delete from disk if custom/trained
+        if is_custom {
+            if let Err(e) = crate::voice_persistence::remove_custom_voice(&voice_id) {
+                self.add_log(cx, &format!("[WARN] [library] Failed to remove from disk: {}", e));
+            }
+        }
+
+        self.update_library_display(cx);
+        self.show_toast(cx, "Voice deleted successfully");
+    }
+
+    /// Preview a voice
+    fn preview_voice(&mut self, cx: &mut Cx, voice_id: String) {
+        self.add_log(cx, &format!("[INFO] [library] Previewing voice: {}", voice_id));
+        
+        // Find the voice
+        if let Some(voice) = self.library_voices.iter().find(|v| v.id == voice_id) {
+            if let Some(ref audio_path) = voice.preview_audio {
+                // TODO: Load and play preview audio
+                self.add_log(cx, &format!("[INFO] [library] Playing preview: {}", audio_path));
+            } else {
+                self.add_log(cx, "[WARN] [library] No preview audio available");
+            }
+        }
+    }
+
+    // ============ Voice Clone Methods ============
+
+    /// Load clone tasks
+    fn load_clone_tasks(&mut self, cx: &mut Cx) {
+        self.clone_loading = true;
+        self.add_log(cx, "[INFO] [clone] Loading clone tasks...");
+        
+        // Load tasks from disk
+        self.clone_tasks = task_persistence::load_clone_tasks();
+        
+        // If no tasks found, create some mock data for demonstration
+        if self.clone_tasks.is_empty() {
+            self.add_log(cx, "[INFO] [clone] No saved tasks found, creating mock data...");
+            self.clone_tasks = vec![
+                CloneTask {
+                    id: "task_001".to_string(),
+                    name: "Voice Clone Task 1".to_string(),
+                    status: CloneTaskStatus::Completed,
+                    progress: 1.0,
+                    created_at: "2024-01-15 10:30:00".to_string(),
+                    audio_path: Some("tasks/task_001/output.wav".to_string()),
+                    reference_text: Some("This is a test reference text for voice cloning.".to_string()),
+                    started_at: Some("2024-01-15 10:30:05".to_string()),
+                    completed_at: Some("2024-01-15 10:45:30".to_string()),
+                    message: Some("Training completed successfully".to_string()),
+                },
+                CloneTask {
+                    id: "task_002".to_string(),
+                    name: "Voice Clone Task 2".to_string(),
+                    status: CloneTaskStatus::Processing,
+                    progress: 0.65,
+                    created_at: "2024-01-15 14:20:00".to_string(),
+                    audio_path: None,
+                    reference_text: Some("Another test text for voice training.".to_string()),
+                    started_at: Some("2024-01-15 14:20:10".to_string()),
+                    completed_at: None,
+                    message: Some("Processing stage 3 of 5...".to_string()),
+                },
+                CloneTask {
+                    id: "task_003".to_string(),
+                    name: "Voice Clone Task 3".to_string(),
+                    status: CloneTaskStatus::Pending,
+                    progress: 0.0,
+                    created_at: "2024-01-15 15:00:00".to_string(),
+                    audio_path: None,
+                    reference_text: Some("Waiting to start training.".to_string()),
+                    started_at: None,
+                    completed_at: None,
+                    message: Some("Waiting in queue...".to_string()),
+                },
+            ];
+            
+            // Save the mock data
+            if let Err(e) = task_persistence::save_clone_tasks(&self.clone_tasks) {
+                self.add_log(cx, &format!("[ERROR] [clone] Failed to save mock tasks: {}", e));
+            }
+        }
+        
+        self.clone_loading = false;
+        self.add_log(cx, &format!("[INFO] [clone] Loaded {} tasks", self.clone_tasks.len()));
+        self.update_clone_display(cx);
+    }
+
+    /// Refresh clone tasks
+    fn refresh_clone_tasks(&mut self, cx: &mut Cx) {
+        self.load_clone_tasks(cx);
+    }
+
+    /// Update clone display
+    fn update_clone_display(&mut self, cx: &mut Cx) {
+        let is_empty = self.clone_tasks.is_empty();
+        
+        // Update empty state visibility
+        self.view
+            .view(ids!(
+                content_wrapper
+                    .main_content
+                    .left_column
+                    .content_area
+                    .clone_page
+                    .clone_empty_state
+            ))
+            .set_visible(cx, is_empty);
+        
+        // Log task statistics
+        if !is_empty {
+            let completed = self.clone_tasks.iter().filter(|t| t.status == CloneTaskStatus::Completed).count();
+            let processing = self.clone_tasks.iter().filter(|t| t.status == CloneTaskStatus::Processing).count();
+            let pending = self.clone_tasks.iter().filter(|t| t.status == CloneTaskStatus::Pending).count();
+            let failed = self.clone_tasks.iter().filter(|t| t.status == CloneTaskStatus::Failed).count();
+            let cancelled = self.clone_tasks.iter().filter(|t| t.status == CloneTaskStatus::Cancelled).count();
+            
+            self.add_log(cx, &format!(
+                "[INFO] [clone] Tasks: {} total ({} completed, {} processing, {} pending, {} failed, {} cancelled)",
+                self.clone_tasks.len(), completed, processing, pending, failed, cancelled
+            ));
+        } else {
+            self.add_log(cx, "[INFO] [clone] No tasks found");
+        }
+        
+        // TODO: Update task cards dynamically using PortalList
+    }
+
+    /// Show cancel task confirmation dialog
+    fn show_cancel_task_confirmation(&mut self, cx: &mut Cx, task_id: String, task_name: String) {
+        self.pending_cancel_task_id = Some(task_id.clone());
+        self.pending_cancel_task_name = Some(task_name.clone());
+        
+        // Update dialog with task name
+        self.view
+            .label(ids!(confirm_cancel_modal.dialog.header.task_name))
+            .set_text(cx, &format!("\"{}\"", task_name));
+        
+        // Show dialog
+        self.view
+            .view(ids!(confirm_cancel_modal))
+            .set_visible(cx, true);
+        
+        self.add_log(cx, &format!("[INFO] [clone] Requesting cancel confirmation for: {}", task_name));
+    }
+
+    /// Cancel a clone task (called after confirmation)
+    fn cancel_clone_task(&mut self, cx: &mut Cx, task_id: String) {
+        self.add_log(cx, &format!("[INFO] [clone] Cancelling task: {}", task_id));
+        
+        // Find and update task status
+        if let Some(task) = self.clone_tasks.iter_mut().find(|t| t.id == task_id) {
+            task.status = CloneTaskStatus::Cancelled;
+            task.message = Some("Task cancelled by user".to_string());
+            
+            // Save to disk
+            if let Err(e) = task_persistence::save_clone_tasks(&self.clone_tasks) {
+                self.add_log(cx, &format!("[ERROR] [clone] Failed to save tasks: {}", e));
+            } else {
+                self.add_log(cx, "[INFO] [clone] Task status saved to disk");
+            }
+        }
+        
+        // TODO: Cancel actual training process
+        
+        self.update_clone_display(cx);
+        self.show_toast(cx, "Task cancelled");
+    }
+
+    /// View clone task details
+    fn view_clone_task(&mut self, cx: &mut Cx, task_id: String) {
+        self.add_log(cx, &format!("[INFO] [clone] Viewing task: {}", task_id));
+        
+        // Find the task and clone the data we need
+        let task_info = self.clone_tasks.iter().find(|t| t.id == task_id).map(|task| {
+            let status_text = match task.status {
+                CloneTaskStatus::Completed => "Completed",
+                CloneTaskStatus::Processing => "Processing",
+                CloneTaskStatus::Pending => "Pending",
+                CloneTaskStatus::Failed => "Failed",
+                CloneTaskStatus::Cancelled => "Cancelled",
+            };
+            
+            (task.name.clone(), status_text, task.progress, task.created_at.clone())
+        });
+        
+        if let Some((name, status, progress, created_at)) = task_info {
+            let details = format!(
+                "Task: {}\nStatus: {}\nProgress: {:.0}%\nCreated: {}",
+                name, status, progress * 100.0, created_at
+            );
+            
+            self.add_log(cx, &format!("[INFO] [clone] Task details:\n{}", details));
+            self.show_toast(cx, &format!("Viewing task: {}", name));
+        } else {
+            self.add_log(cx, &format!("[WARN] [clone] Task not found: {}", task_id));
+            self.show_toast(cx, "Task not found");
+        }
+    }
 }
 
 impl TTSScreenRef {
@@ -2981,12 +4699,6 @@ impl TTSScreenRef {
             inner.dark_mode = dark_mode;
             inner
                 .view
-                .apply_over(cx, live! { draw_bg: { dark_mode: (dark_mode) } });
-
-            // Apply dark mode to MofaHero
-            inner
-                .view
-                .mofa_hero(ids!(content_wrapper.main_content.left_column.hero))
                 .apply_over(cx, live! { draw_bg: { dark_mode: (dark_mode) } });
 
             // Apply dark mode to voice selector
